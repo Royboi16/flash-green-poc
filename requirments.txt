@@ -1,1 +1,17 @@
+# --- core ---
+aiohttp>=3.9
+pydantic>=2.6
+prometheus_client>=0.20
+numpy>=1.26
+pandas>=2.2
+numba>=0.59              # optional GPU / JIT speed‑ups
+rich>=13.7               # pretty console logs
+
+# --- testing ---
+pytest>=8.1
+hypothesis>=6.98
+
+# --- blockchain demo (optional) ---
+web3>=6.15               # talk to local Hardhat/Ganache
+python-dotenv>=1.0       # load .env into config
 
