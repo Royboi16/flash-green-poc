@@ -1,1 +1,30 @@
+[tool.poetry]
+name        = "flash-green-poc"
+version     = "0.1.0"
+description = "Proof‑of‑concept flash‑loan energy‑vs‑futures arbitrage bot"
+authors     = ["Your Name <you@example.com>"]
+packages    = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python              = "^3.11"
+aiohttp             = "^3.9"
+pydantic            = "^2.6"
+prometheus-client   = "^0.20"
+numpy               = "^1.26"
+pandas              = "^2.2"
+numba               = "^0.59"
+rich                = "^13.7"
+web3                = { version = "^6.15", optional = true }
+python-dotenv       = { version = "^1.0", optional = true }
+
+[tool.poetry.group.test.dependencies]
+pytest     = "^8.1"
+hypothesis = "^6.98"
+
+[tool.poetry.extras]
+hardhat = ["web3", "python-dotenv"]
+
+[build-system]
+requires = ["poetry-core>=1.5.0"]
+build-backend = "poetry.core.masonry.api"
 
