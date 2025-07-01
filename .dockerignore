@@ -1,7 +1,6 @@
-__pycache__/
-.pytest_cache/
-data/
-infra/
-tests/
-.logs/
-.git/
+# Ignore everything except what we need to build
+*
+!Dockerfile
+!pyproject.toml
+!poetry.lock
+!app/**

@@ -1,33 +1,41 @@
 # syntax=docker/dockerfile:1
 
+# ── Build stage ─────────────────────────────────────────────────────────────
 FROM python:3.11-slim AS build
 WORKDIR /app
 
+# system deps for building any wheels
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy lockfiles and your source ahead of install so Poetry can see your package
-COPY pyproject.toml poetry.lock /app/
-COPY . /app
+# 1) Copy only the files needed to install dependencies
+COPY pyproject.toml poetry.lock ./
 
-# install deps (runtime only)
+# 2) Copy your package code so Poetry can see the "app" module
+COPY app ./app
+
+# 3) Install runtime deps only (no dev)
 RUN pip install poetry && \
     poetry config virtualenvs.create false && \
     poetry install --no-interaction --no-ansi --only main
 
-COPY . /app
-
+# ── Final stage ─────────────────────────────────────────────────────────────
 FROM python:3.11-slim
 WORKDIR /app
 
+# create non-root user
 RUN addgroup --system app && adduser --system --ingroup app app
-USER app
 
+# copy in installed Python packages and your app code
 COPY --from=build /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=build /app              /app
 
+USER app
 ENV PYTHONUNBUFFERED=1
+
+# expose metrics & API ports
 EXPOSE 8000 8002
 
+# launch your orchestrator
 ENTRYPOINT ["python", "-m", "app.orchestrator"]
