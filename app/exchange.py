@@ -1,30 +1,105 @@
 # app/exchange.py
+import time
 from dataclasses import dataclass
-import random
+from app.feeds.bmrs_csv import BMRSCsvFeed
+from app.feeds.ice_csv import ICECsvFeed
+import ccxt
+
+# our new book
+from app.orderbook import OrderBook, Level
 
 @dataclass
 class Fill:
     qty_mwh: float
     price: float
 
-class MockPowerLedger:
+_pl_feed = BMRSCsvFeed("data/bmrs_spot_uk_2024.csv")
+_ice_feed = ICECsvFeed("data/ice_baseload_q2_2024.csv")
+
+class PowerCsvExchange:
+    def quote(self): return _pl_feed.quote()
+    def advance(self): _pl_feed.advance()
+    def buy(self, mwh, max_price):
+        price = self.quote()
+        if price > max_price: raise RuntimeError("Slipped above max_price")
+        return Fill(mwh, price)
+
+class IceCsvExchange:
+    def quote(self): return _ice_feed.quote()
+    def advance(self): _ice_feed.advance()
+    def sell(self, mwh): return Fill(mwh, self.quote())
+    
+class DepthAwarePowerExchange:
+    """
+    Wrap a CSV‐price feed with a toy orderbook simulation.
+    """
+    def __init__(self,
+                 latency_ms: int,
+                 slippage_bp: float,
+                 levels: int,
+                 level_size: float):
+        self.feed = BMRSCsvFeed("data/bmrs_spot_uk_2024.csv")
+        self.latency_ms = latency_ms
+        self.slippage_bp = slippage_bp
+        self.levels = levels
+        self.level_size = level_size
+
     def quote(self) -> float:
-        """Random negative/positive spot price (£/MWh)."""
-        base = random.gauss(mu=-20, sigma=25)     # ⇒ neg about 40 % of the time
-        return round(base, 2)
+        return self.feed.quote()
+
+    def advance(self) -> None:
+        self.feed.advance()
+
+    def buy(self, mwh: float, max_price: float) -> Fill:
+        # simulate latency
+        time.sleep(self.latency_ms / 1_000)
+
+        base = self.quote()
+        # build a toy ask‐side book around base
+        asks = [
+            Level(price=base + i * 0.5, size=self.level_size)
+            for i in range(self.levels)
+        ]
+        book = OrderBook(bids=[], asks=asks)
+
+        # apply slippage to max_price
+        eff_max = max_price * (1 + self.slippage_bp / 10_000)
+        lvl = book.match_buy(mwh, eff_max)
+        return Fill(lvl.size, lvl.price)
+        
+class LivePowerExchange:
+    """
+    A sync CCXT REST ticker adapter. buy() and sell() are instantaneous
+    market‐price simulations against the last trade price.
+    """
+    def __init__(self,
+                 exchange_id: str,
+                 symbol:      str,
+                 api_key:     str | None = None,
+                 api_secret:  str | None = None):
+        ex_class = getattr(ccxt, exchange_id)
+        self.exchange = ex_class({
+            "apiKey": api_key,
+            "secret": api_secret,
+            "enableRateLimit": True,
+        })
+        self.symbol = symbol
+
+    def quote(self) -> float:
+        ticker = self.exchange.fetch_ticker(self.symbol)
+        return float(ticker["last"])
+
+    def advance(self) -> None:
+        # no-op for REST polling
+        pass
 
     def buy(self, mwh: float, max_price: float) -> Fill:
         price = self.quote()
         if price > max_price:
             raise RuntimeError("Slipped above max_price")
-        return Fill(qty_mwh=mwh, price=price)
-
-
-class MockICE:
-    def quote(self) -> float:
-        """Futures fair value derived from spot + constant premium."""
-        return round(65 + random.gauss(mu=0, sigma=3), 2)  # ≈ £65
+        return Fill(mwh, price)
 
     def sell(self, mwh: float) -> Fill:
-        return Fill(qty_mwh=mwh, price=self.quote())
+        price = self.quote()
+        return Fill(mwh, price)
 

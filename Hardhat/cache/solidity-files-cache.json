@@ -1,0 +1,80 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "/Users/danielventrudo/flash-green-poc/Hardhat/contracts/FlashLoan.sol": {
+      "lastModificationDate": 1747551292485,
+      "contentHash": "560f2c82587a1d59ded5afc4c98abdae",
+      "sourceName": "contracts/FlashLoan.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "FlashLoan",
+        "IFlashLoanReceiver"
+      ]
+    },
+    "/Users/danielventrudo/flash-green-poc/Hardhat/contracts/TestReceiver.sol": {
+      "lastModificationDate": 1747550997547,
+      "contentHash": "dfac0cd4b0929cd77b6f0dca80cb7619",
+      "sourceName": "contracts/TestReceiver.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [
+        "./FlashLoan.sol"
+      ],
+      "versionPragmas": [
+        "^0.8.0"
+      ],
+      "artifacts": [
+        "TestReceiver"
+      ]
+    }
+  }
+}

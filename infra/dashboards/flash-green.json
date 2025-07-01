@@ -1,0 +1,23 @@
+{
+  "uid": "flash-green",
+  "title": "Flash‑Green PnL",
+  "schemaVersion": 37,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Profit (£)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "gbp_profit_positive_total - gbp_profit_negative_total",
+          "legendFormat": "net"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "currencyGBP", "decimals": 0 }
+      },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 }
+    }
+  ]
+}

@@ -1,68 +1,120 @@
+# app/config.py
+
 """
 Centralised runtime settings.
 
-Priority order:
-1. Dot‑env file (.env)  – only if python‑dotenv installed
-2. Real env vars        – e.g. BMRS_API_KEY, ICE_USER, ICE_PASS
-3. Defaults hard‑coded below
+Priority:
+ 1. .env file (if python-dotenv is installed)
+ 2. real environment vars
+ 3. hard-coded defaults
 """
 
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
+from pydantic import Field, AnyHttpUrl
+from typing import Literal, Optional
 
-from pydantic import AnyUrl, BaseSettings, Field, PositiveFloat, conint
+# ── Pydantic v1 ⇆ v2 compatibility ───────────────────────────────────────────
+try:
+    from pydantic_settings import BaseSettings    # v2+ settings package
+except ImportError:
+    from pydantic import BaseSettings             # v1 fallback
 
-# ---------------------------------------------------------------------
-# Load .env automatically if present
-# ---------------------------------------------------------------------
+from pydantic import AnyUrl, Field, PositiveFloat, conint
+
+# ── auto-load .env ────────────────────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
-    _env_path = Path(__file__).resolve().parent.parent / ".env"
-    if _env_path.exists():
-        load_dotenv(_env_path)
+    env_path = Path(__file__).parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
 except ModuleNotFoundError:
     pass
+    
 
-# ---------------------------------------------------------------------
-# Settings model
-# ---------------------------------------------------------------------
+
 class Settings(BaseSettings):
-    # --- strategy knobs ---
-    neg_threshold: float = Field(
-        0, description="Buy power when spot ≤ this price (£/MWh)"
-    )
-    spread_min:   PositiveFloat = Field(
-        50, description="Execute only if futures‑spot ≥ this (£/MWh)"
-    )
-    kelly_bank_gbp: PositiveFloat = 50_000
+    # strategy knobs
+    neg_threshold: float = Field(0, description="Spot ≤ this triggers buy (£/MWh)")
+    spread_min:   PositiveFloat = Field(50, description="Min fut-spot spread (£/MWh)")
+    kelly_bank_gbp: PositiveFloat = Field(50_000, description="Kelly bank size (£)")
 
-    # --- mocking parameters  ---
-    pl_sigma: PositiveFloat = 25     # spot price std‑dev for mock
-    fut_mu:   float          = 65    # mean futures price
+    # ── Phase 4: risk & limit knobs ────────────────────────────────────────
+    trading_enabled:       bool    = Field(True,     description="Global master switch")
+    max_notional_per_trade:float   = Field(10_000.0, description="Max exposure per cycle (£)")
+    max_daily_loss_gbp:    float   = Field(500.0,    description="Stop trading after this daily loss (£)")
 
-    # --- external services (placeholders) ---
+    # ── Phase 8: live‐feed knobs ───────────────────────────────────────────
+    use_live_feed:     bool           = Field(False,
+                                              description="Enable live CCXT feed")
+    live_exchange:     str            = Field("binance",
+                                              description="CCXT exchange id")
+    live_symbol:       str            = Field("BTC/USDT",
+                                              description="CCXT symbol to poll")
+    live_api_key:      Optional[str]  = Field(None,
+                                              env="LIVE_API_KEY",
+                                              description="(Optional) CCXT API key")
+    live_api_secret:   Optional[str]  = Field(None,
+                                              env="LIVE_API_SECRET",
+                                              description="(Optional) CCXT API secret")    
+    
+
+    # mock-feed params
+    pl_sigma: PositiveFloat = Field(25, description="Std-dev for spot noise")
+    fut_mu:   float         = Field(65, description="Mean for futures noise")
+
+    # ports
+    metrics_port: conint(gt=0, lt=65535) = Field(8000, description="Prometheus port")
+    api_port:     conint(gt=0, lt=65535) = Field(8002, description="FastAPI port")
+
+    # externals (placeholders)
     bmrs_api_key: Optional[str] = None
     ice_user:     Optional[str] = None
     ice_pass:     Optional[str] = None
-    hardhat_rpc:  Optional[AnyUrl] = "http://127.0.0.1:8545"
+    hardhat_rpc:  Optional[AnyUrl] = Field("http://127.0.0.1:8545", description="EVM RPC")
 
-    # --- prometheus ---
-    metrics_port: conint(gt=0, lt=65535) = 8000
+    # ----------------------------------------------------------------------
+    # On-chain flash-loan contract (Hardhat/EVM)
+    # ----------------------------------------------------------------------
+    flash_loan_contract: Optional[str] = Field(
+        None,
+        env="FLASH_LOAN_CONTRACT",
+        description="Deployed FlashLoan contract address (required if USE_WEB3_LOAN=1)",
+    )
+    
+    # ----------------------------------------------------------------------
+    # On-chain flash-loan receiver contract address
+    # ----------------------------------------------------------------------
+    receiver_address: Optional[str] = Field(
+        None,
+        env="FLASH_LOAN_RECEIVER",
+        description="Address of the deployed TestReceiver contract (required if USE_WEB3_LOAN=1)",
+    )
+    
+    # ── Phase 2: order‐book micro‐sim knobs ────────────────────────────
+    use_depth_sim:       bool    = Field(False, description="Enable orderbook micro-sim")
+    exec_latency_ms:     int     = Field(100,   description="Simulated execution latency (ms)")
+    slippage_bp:         float   = Field(5.0,   description="Slippage in basis points (1 bp = 0.01%)")
+    book_levels:         int     = Field(5,     description="Number of depth levels per side")
+    book_size_mwh:       float   = Field(100.0, description="Quantity at each depth level (MWh)")
 
-    # --- environment ---
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # ----------------------------------------------------------------------
+    # Logging
+    # ----------------------------------------------------------------------
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        "INFO",
+        description="Log level",
+    )
+
 
     class Config:
         env_file_encoding = "utf-8"
         case_sensitive    = False
         extra             = "ignore"
 
-
 @lru_cache
-def get_settings() -> Settings:      # import‑safe singleton
+def get_settings() -> Settings:
     return Settings()
 
-
-settings = get_settings()            # auto‑instantiated at import
-
+settings = get_settings()  # singleton

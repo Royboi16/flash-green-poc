@@ -1,0 +1,11 @@
+groups:
+- name: risk_alerts
+  rules:
+  - alert: DailyLossLimitExceeded
+    expr: gbp_daily_loss_total > 500
+    for:  1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Bot daily loss exceeded"
+      description: "The bot has lost more than £500 today."

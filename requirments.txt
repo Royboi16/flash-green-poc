@@ -15,3 +15,5 @@ hypothesis>=6.98
 web3>=6.15               # talk to local Hardhat/Ganache
 python-dotenv>=1.0       # load .env into config
 
+
+sqlmodel>=0.0.8
