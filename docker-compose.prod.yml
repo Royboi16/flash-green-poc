@@ -1,13 +1,13 @@
-version: "3.8"
+# ── docker-compose.prod.yml ─────────────────────────────────────────────────
 services:
   bot:
-    build: .
+    image: royboi16/flash-green-poc:latest   # pull from Docker Hub
     restart: unless-stopped
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data:ro                  # mount your CSVs (read-only)
     ports:
-      - "8000:8000"
-      - "8002:8002"
+      - "8000:8000"                          # Prometheus metrics
+      - "8002:8002"                          # FastAPI health & PnL JSON
 
   prometheus:
     image: prom/prometheus:v2.52.0
@@ -30,5 +30,4 @@ services:
 
 volumes:
   grafana-data:
-
 
