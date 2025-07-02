@@ -6,4 +6,4 @@
 !pyproject.toml
 !poetry.lock
 !app/**
-!data/
+!data/*.csv
