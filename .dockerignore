@@ -1,6 +1,9 @@
-# Ignore everything except what we need to build
+# .dockerignore
+# Ignore everything…
 *
+# …but allow these
 !Dockerfile
 !pyproject.toml
 !poetry.lock
 !app/**
+!data/
