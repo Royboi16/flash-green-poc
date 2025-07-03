@@ -4,89 +4,104 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, NamedTuple, Dict, Any
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Trade record as a Python dataclass
-# ──────────────────────────────────────────────────────────────────────────────
-@dataclass
-class Trade:
-    id: int
-    timestamp: datetime
-    qty_mwh: float
-    spot_price: float
-    fut_price: float
-    profit: float
+# ─── Database setup ──────────────────────────────────────────────────────────
 
-# ──────────────────────────────────────────────────────────────────────────────
-# DB initialization & helpers
-# ──────────────────────────────────────────────────────────────────────────────
-_DB_PATH = Path("data/trades.db")
+_DB_PATH = Path("data") / "flash_green.db"
+_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+_conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+_conn.row_factory = sqlite3.Row
 
-def init_db() -> None:
-    """Ensure the trades table exists."""
-    _DB_PATH.parent.mkdir(exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS trades (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp   TEXT    NOT NULL,
-            qty_mwh     REAL    NOT NULL,
-            spot_price  REAL    NOT NULL,
-            fut_price   REAL    NOT NULL,
-            profit      REAL    NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+# Create tables if they don't exist
+with _conn:
+    _conn.execute("""
+    CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        qty_mwh    REAL,
+        spot_price REAL,
+        fut_price  REAL,
+        profit     REAL,
+        timestamp  TEXT
+    )""")
+    _conn.execute("""
+    CREATE TABLE IF NOT EXISTS orders (
+        id            TEXT PRIMARY KEY,
+        symbol        TEXT,
+        side          TEXT,
+        qty_requested REAL,
+        qty_filled    REAL,
+        avg_price     REAL,
+        status        TEXT,
+        timestamp     TEXT
+    )""")
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Persistence functions
-# ──────────────────────────────────────────────────────────────────────────────
-def save_trade(qty_mwh: float, spot_price: float, fut_price: float, profit: float) -> Trade:
-    init_db()
-    conn = sqlite3.connect(_DB_PATH)
-    cur = conn.cursor()
+# ─── Models ──────────────────────────────────────────────────────────────────
+
+class Order(NamedTuple):
+    id: str
+    symbol: str
+    side: str
+    qty_requested: float
+    qty_filled: float
+    avg_price: float
+    status: str
+    timestamp: str
+
+# ─── Trade persistence ───────────────────────────────────────────────────────
+
+def save_trade(qty_mwh: float, spot_price: float, fut_price: float, profit: float) -> None:
+    """Persist a completed trade (used by your PoC)."""
     ts = datetime.utcnow().isoformat()
-    cur.execute(
-        "INSERT INTO trades (timestamp, qty_mwh, spot_price, fut_price, profit) VALUES (?, ?, ?, ?, ?)",
-        (ts, qty_mwh, spot_price, fut_price, profit),
-    )
-    conn.commit()
-    trade_id = cur.lastrowid
-    conn.close()
-    return Trade(
-        id=trade_id,
-        timestamp=datetime.fromisoformat(ts),
-        qty_mwh=qty_mwh,
-        spot_price=spot_price,
-        fut_price=fut_price,
-        profit=profit,
-    )
-
-def get_trades(limit: int = 100) -> List[Trade]:
-    init_db()
-    conn = sqlite3.connect(_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT id, timestamp, qty_mwh, spot_price, fut_price, profit "
-        "FROM trades ORDER BY timestamp DESC LIMIT ?",
-        (limit,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-
-    return [
-        Trade(
-            id=row["id"],
-            timestamp=datetime.fromisoformat(row["timestamp"]),
-            qty_mwh=row["qty_mwh"],
-            spot_price=row["spot_price"],
-            fut_price=row["fut_price"],
-            profit=row["profit"],
+    with _conn:
+        _conn.execute(
+            "INSERT INTO trades (qty_mwh, spot_price, fut_price, profit, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (qty_mwh, spot_price, fut_price, profit, ts),
         )
-        for row in rows
-    ]
+
+def get_trades() -> List[Dict[str, Any]]:
+    """Fetch all past trades for your PnL API."""
+    cur = _conn.execute("SELECT qty_mwh, spot_price, fut_price, profit, timestamp FROM trades ORDER BY id")
+    return [dict(row) for row in cur.fetchall()]
+
+# ─── Order‐tracking / idempotency ────────────────────────────────────────────
+
+def save_order(order: Order) -> None:
+    """Insert or replace an in‐flight ICE order."""
+    with _conn:
+        _conn.execute(
+            """
+            INSERT OR REPLACE INTO orders
+              (id, symbol, side, qty_requested, qty_filled, avg_price, status, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                order.id,
+                order.symbol,
+                order.side,
+                order.qty_requested,
+                order.qty_filled,
+                order.avg_price,
+                order.status,
+                order.timestamp,
+            ),
+        )
+
+def get_open_orders() -> List[Order]:
+    """Return all orders not yet FILLED/CANCELLED/REJECTED."""
+    cur = _conn.execute(
+        """
+        SELECT id, symbol, side, qty_requested, qty_filled, avg_price, status, timestamp
+          FROM orders
+         WHERE status NOT IN ('FILLED','CANCELLED','REJECTED')
+        """
+    )
+    return [Order(**row) for row in cur.fetchall()]
+
+def update_order(order_id: str, filled: float, avg_price: float, status: str) -> None:
+    """Update status/filled/price for an existing order."""
+    with _conn:
+        _conn.execute(
+            "UPDATE orders SET qty_filled=?, avg_price=?, status=? WHERE id=?",
+            (filled, avg_price, status, order_id),
+        )

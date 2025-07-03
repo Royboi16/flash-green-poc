@@ -130,6 +130,10 @@ class Settings(BaseSettings):
         description="CCXT API secret"
     )
     
+    # How long to poll before cancelling
+    order_timeout_secs: int = Field(30, env="ORDER_TIMEOUT_SECS", description="Max seconds to wait for fill")
+    order_poll_interval: float = Field(1.0, env="ORDER_POLL_INTERVAL", description="Seconds between fetch_order calls")
+    
     # Live ICE integration (optional unless USE_ICE_LIVE=1)
     use_ice_live:   bool              = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
     ice_api_url:    Optional[AnyUrl]  = Field(None, env="ICE_API_URL",    description="Base URL for ICE REST API")
