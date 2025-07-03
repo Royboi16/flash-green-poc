@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
 
