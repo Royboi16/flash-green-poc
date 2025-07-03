@@ -107,6 +107,35 @@ class Settings(BaseSettings):
         description="Log level",
     )
 
+    # Live-trading knobs
+    use_live_feed: bool = Field(
+        False, env="USE_LIVE_FEED",
+        description="If true, pull quotes from CCXT instead of CSV"
+    )
+    live_exchange: Optional[str] = Field(
+        None, env="LIVE_EXCHANGE",
+        description="CCXT exchange id, e.g. 'binance'"
+    )
+    live_symbol: Optional[str] = Field(
+        None, env="LIVE_SYMBOL",
+        description="Trading symbol, e.g. 'BTC/USDT'"
+    )
+    live_api_key: Optional[str] = Field(
+        None, env="LIVE_API_KEY",
+        description="CCXT API key"
+    )
+    live_api_secret: Optional[str] = Field(
+        None, env="LIVE_API_SECRET",
+        description="CCXT API secret"
+    )
+    
+    # Live ICE integration
+    ice_api_url: AnyUrl = Field(..., env="ICE_API_URL", description="Base URL for ICE REST API")
+    ice_api_key: str    = Field(..., env="ICE_API_KEY", description="API key for ICE orders")
+    ice_api_secret: str = Field(..., env="ICE_API_SECRET", description="API secret for ICE orders")
+    ice_symbol: str     = Field("UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol")
+    use_ice_live: bool  = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
+
 
     class Config:
         env_file_encoding = "utf-8"

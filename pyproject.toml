@@ -30,6 +30,7 @@ uvicorn = "^0.34.1"
 fastapi = "^0.115.12"
 httpx    = "^0.24"
 ccxt = "^4.4.91"
+requests = "^2.31.0"
 
 
 [tool.poetry.group.test.dependencies]

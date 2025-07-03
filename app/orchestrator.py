@@ -4,15 +4,45 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
+import os
+from datetime import datetime, date
 from time import sleep
-from app import logger                      # Rich logger
+from app import logger
 from app.metrics import METRICS
-from app.exchange import PowerCsvExchange, DepthAwarePowerExchange, LivePowerExchange, IceCsvExchange
 from app.strategy import should_trade
 from app.storage import save_trade
 from app.config import settings
-import os
-from datetime import datetime, date
+
+# ─── choose PowerExchange implementation ───────────────────────────────────
+if settings.use_ice_live:
+    from app.exchange_ice import ICEPowerExchange as PowerExchange
+elif settings.use_depth_sim:
+    from app.exchange import DepthAwarePowerExchange as PowerExchange
+else:
+    from app.exchange import PowerCsvExchange as PowerExchange
+
+# instantiate
+if settings.use_ice_live:
+    pl = PowerExchange()
+elif settings.use_depth_sim:
+    pl = PowerExchange(
+        settings.exec_latency_ms,
+        settings.slippage_bp,
+        settings.book_levels,
+        settings.book_size_mwh,
+    )
+else:
+    pl = PowerExchange()
+
+# futures always CSV for now
+from app.exchange import IceCsvExchange
+ice = IceCsvExchange()
+
+# flash-loan adapter (unchanged)
+if os.getenv("USE_WEB3_LOAN") == "1":
+    from app.loan_web3 import Web3FlashLoan as FlashLoanAdapter
+else:
+    from app.loan import flash_loan as FlashLoanAdapter
 
 # ── Allow test-friendly override of “today” ────────────────────────────────
 def _today() -> date:
@@ -21,32 +51,6 @@ def _today() -> date:
 # Globals to track daily PnL
 _current_day: date = _today()
 _daily_loss:   float = 0.0
-
-if os.getenv("USE_WEB3_LOAN") == "1":
-    from app.loan_web3 import Web3FlashLoan as FlashLoanAdapter
-else:
-    from app.loan import flash_loan as FlashLoanAdapter
-
-print(settings.flash_loan_contract)  # → "0xYourDeployedContractAddress"
-
-if settings.use_live_feed:
-    pl = LivePowerExchange(
-        settings.live_exchange,
-        settings.live_symbol,
-        settings.live_api_key,
-        settings.live_api_secret,
-    )
-elif settings.use_depth_sim:
-    pl = DepthAwarePowerExchange(
-        settings.exec_latency_ms,
-        settings.slippage_bp,
-        settings.book_levels,
-        settings.book_size_mwh,
-    )
-else:
-    pl = PowerCsvExchange()
-    
-ice = IceCsvExchange()
 
 
 def run_cycle() -> bool:
