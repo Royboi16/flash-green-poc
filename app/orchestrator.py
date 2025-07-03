@@ -65,6 +65,11 @@ def _settle_open_orders(pl):
         stat = data["status"]
         filled = float(data.get("filled_qty", 0))
         avg_p = float(data.get("avg_price", 0))
+        # ←── ADD YOUR DEBUG LOG HERE ─────────────────────────────
+        logger.debug(
+            f"Settling order {o.id}: "
+            f"status={stat}, filled={filled}, avg_price={avg_p}"
+        )
         update_order(o.id, filled, avg_p, stat)
 
 def run_cycle() -> bool:
