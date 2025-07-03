@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal, Optional
 from pydantic import Field, AnyHttpUrl
 from typing import Literal, Optional
+from pydantic import root_validator
 
 # ── Pydantic v1 ⇆ v2 compatibility ───────────────────────────────────────────
 try:
@@ -129,12 +130,21 @@ class Settings(BaseSettings):
         description="CCXT API secret"
     )
     
-    # Live ICE integration
-    ice_api_url: AnyUrl = Field(..., env="ICE_API_URL", description="Base URL for ICE REST API")
-    ice_api_key: str    = Field(..., env="ICE_API_KEY", description="API key for ICE orders")
-    ice_api_secret: str = Field(..., env="ICE_API_SECRET", description="API secret for ICE orders")
-    ice_symbol: str     = Field("UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol")
-    use_ice_live: bool  = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
+    # Live ICE integration (optional unless USE_ICE_LIVE=1)
+    use_ice_live:   bool              = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
+    ice_api_url:    Optional[AnyUrl]  = Field(None, env="ICE_API_URL",    description="Base URL for ICE REST API")
+    ice_api_key:    Optional[str]     = Field(None, env="ICE_API_KEY",    description="API key for ICE orders")
+    ice_api_secret: Optional[str]     = Field(None, env="ICE_API_SECRET", description="API secret for ICE orders")
+    ice_symbol:     Optional[str]     = Field("UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol")
+
+    @root_validator
+    def require_ice_fields_when_enabled(cls, values):
+        if values.get("use_ice_live"):
+            missing = [k for k in ("ice_api_url","ice_api_key","ice_api_secret","ice_symbol")
+                       if not values.get(k)]
+            if missing:
+                raise ValueError(f"Missing ICE config: {', '.join(missing)} (set USE_ICE_LIVE=0 to skip)")
+        return values
 
 
     class Config:
