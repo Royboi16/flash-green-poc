@@ -9,6 +9,7 @@ from datetime import datetime
 from app import logger
 from app.metrics import METRICS
 from app.storage import get_trades, get_open_orders
+from fastapi.responses import PlainTextResponse
 
 api = FastAPI(
     title="Flash-Green PoC",
@@ -30,7 +31,7 @@ class TradeOut(BaseModel):
         from_attributes = True
 
 class OrderOut(BaseModel):
-    id: str
+    id: Optional[str]
     symbol: str
     side: str
     qty_requested: float
@@ -74,4 +75,12 @@ async def open_orders():
     """
     List any in-flight (open) orders.
     """
-    return get_open_orders()
+    try:
+        return get_open_orders()
+    except Exception as e:
+        # log full traceback
+        logger.error("Error in /orders/open", exc_info=True)
+        # return a plain-text 500 so the client sees something legible
+        return PlainTextResponse(
+            "Internal Server Error fetching open orders", status_code=500
+        )
