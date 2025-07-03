@@ -12,9 +12,9 @@ Priority:
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
-from pydantic import Field, AnyHttpUrl
+from pydantic import AnyUrl, Field, model_validator
+from pydantic_settings import BaseSettings
 from typing import Literal, Optional
-from pydantic import root_validator
 
 # ── Pydantic v1 ⇆ v2 compatibility ───────────────────────────────────────────
 try:
@@ -137,14 +137,19 @@ class Settings(BaseSettings):
     ice_api_secret: Optional[str]     = Field(None, env="ICE_API_SECRET", description="API secret for ICE orders")
     ice_symbol:     Optional[str]     = Field("UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol")
 
-    @root_validator
-    def require_ice_fields_when_enabled(cls, values):
-        if values.get("use_ice_live"):
-            missing = [k for k in ("ice_api_url","ice_api_key","ice_api_secret","ice_symbol")
-                       if not values.get(k)]
+    @model_validator(mode="after")
+    def require_ice_fields_when_enabled(cls, model: "Settings") -> "Settings":
+        if model.use_ice_live:
+            missing = []
+            for field in ("ice_api_url", "ice_api_key", "ice_api_secret", "ice_symbol"):
+                if getattr(model, field) is None:
+                    missing.append(field)
             if missing:
-                raise ValueError(f"Missing ICE config: {', '.join(missing)} (set USE_ICE_LIVE=0 to skip)")
-        return values
+                raise ValueError(
+                    f"Missing ICE config: {', '.join(missing)} – either set those env vars, "
+                    "or export USE_ICE_LIVE=0 to disable live ICE trading"
+                )
+        return model
 
 
     class Config:
