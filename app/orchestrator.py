@@ -155,6 +155,7 @@ def run_cycle() -> bool:
                 # ── Record the ICE buy order for idempotency ────────────────────
                 save_order(Order(
                     id=fill_a.order_id,
+                    timestamp=datetime.utcnow(),
                     symbol=settings.ice_symbol,
                     side="BUY",
                     qty_requested=qty,
