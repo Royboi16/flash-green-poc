@@ -8,7 +8,7 @@ import os
 from datetime import datetime, date
 from time import sleep
 
-from app import logger
+from app.logger import logger
 from app.metrics import METRICS
 from app.strategy import should_trade
 from app.storage import (
@@ -69,6 +69,13 @@ def _settle_open_orders(pl):
 
 def run_cycle() -> bool:
     global _current_day, _daily_loss
+    
+    # ——— DEBUG: show current configuration —————————————————————————
+    logger.debug(
+        f"CONFIG: neg_threshold={settings.neg_threshold!r}, "
+        f"spread_min={settings.spread_min!r}, "
+        f"max_notional_per_trade={settings.max_notional_per_trade!r}"
+    )
 
     # reset daily loss at UTC midnight
     today = _today()
@@ -97,10 +104,14 @@ def run_cycle() -> bool:
 
     spot = pl.quote()
     fut  = ice.quote()
+    logger.debug(f"TICK:   spot={spot!r}, fut={fut!r}, spread={fut-spot!r}")
 
     trade, qty, spread = should_trade(spot, fut)
     METRICS.spread.set(spread)
-
+    logger.debug(f" SIGNAL: trade={trade!r}, qty={qty!r}, spread={spread!r}")
+    
+    logger.debug(f"DEBUG tick: spot={spot}, fut={fut}, spread={spread}, trade={trade}, qty={qty}")
+    
     if not trade:
         return False
 
@@ -134,11 +145,11 @@ def run_cycle() -> bool:
     else:
         with FlashLoanAdapter(limit_gbp=100_000) as wallet:
             try:
-                # Leg A – buy power (strict ≤ £0/MWh)
+                # Leg A – buy power at current spot price cap
                 try:
-                    fill_a = pl.buy(qty, max_price=0)
+                    fill_a = pl.buy(qty, max_price=spot)
                 except RuntimeError:
-                    # Slipped above £0; skip this tick
+                    # If we still slip, skip this tick
                     return False
 
                 # ── Record the ICE buy order for idempotency ────────────────────
@@ -190,7 +201,7 @@ def run_cycle() -> bool:
 if __name__ == "__main__":
     from prometheus_client import start_http_server
     from app.config        import settings
-    from app               import logger
+    from app.logger        import logger
     import uvicorn
     from threading import Thread
 
