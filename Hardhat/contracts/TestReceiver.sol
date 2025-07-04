@@ -1,26 +1,30 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.21;
 
-import "./FlashLoan.sol";
+interface IFlashLoan {
+    /// @notice feeBps is exposed by FlashLoan
+    function feeBps() external view returns (uint256);
+}
 
-contract TestReceiver is IFlashLoanReceiver {
+contract TestReceiver {
     address public lender;
-    event Executed(uint256 amount, uint256 fee);
 
     constructor(address _lender) {
         lender = _lender;
     }
 
-    // receive loan, do nothing, repay amount+fee back to lender
-    function executeOnLoan(uint256 amount, uint256 feeBps) external payable override {
-        uint256 fee = (amount * feeBps) / 10_000;
-        uint256 repay = amount + fee;
-        // repay lender
-        (bool sent,) = payable(lender).call{value: repay}("");
-        require(sent, "Repay failed");
-        emit Executed(amount, fee);
-    }
+    /// @notice Allow receiving the principal
+    receive() external payable {}
 
-    // helper to fund contract
-    function fund() external payable {}
+    /// @notice This is called by FlashLoan.flashLoan(...)
+    /// @param amount The borrowed amount
+    /// @param _feeBps The fee basis points (same as lender.feeBps())
+    function executeOnLoan(uint256 amount, uint256 _feeBps) external payable {
+        // compute the fee
+        uint256 fee = (amount * _feeBps) / 10_000;
+
+        // repay principal + fee back to lender
+        (bool sent, ) = payable(lender).call{value: amount + fee}("");
+        require(sent, "Repayment failed");
+    }
 }

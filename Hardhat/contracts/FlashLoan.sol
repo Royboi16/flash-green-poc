@@ -1,5 +1,10 @@
+// hardhat/contracts/FlashLoan.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
+
+interface IFlashLoanReceiver {
+    function executeOnLoan(uint256 amount, uint256 feeBps) external payable;
+}
 
 contract FlashLoan {
     address public owner;
@@ -10,29 +15,25 @@ contract FlashLoan {
         feeBps  = _feeBps;
     }
 
-    /// @notice Execute a flash-loan: receiverContract must implement executeOnLoan()
+    /// @notice helper: compute the fee for a given amount
+    function feeFor(uint256 amount) public view returns (uint256) {
+        return (amount * feeBps) / 10_000;
+    }
+
+    /// @notice Execute a flash-loan: receiver must implement executeOnLoan()
     function flashLoan(address receiver, uint256 amount) external {
         uint256 balanceBefore = address(this).balance;
         require(balanceBefore >= amount, "Not enough liquidity");
 
-        // send funds
-        (bool sent,) = receiver.call{value: amount}("");
-        require(sent, "Loan transfer failed");
+        // FIX: Combine the value transfer and function call into one.
+        // This transfers the loan amount and immediately invokes the receiver's logic.
+        IFlashLoanReceiver(receiver).executeOnLoan{value: amount}(amount, feeBps);
 
-        // callback
-        IFlashLoanReceiver(receiver).executeOnLoan{value:0}(amount, feeBps);
-
-        // compute repayment
-        uint256 fee    = (amount * feeBps) / 10_000;
-        uint256 repay  = amount + fee;
-        uint256 balanceAfter = address(this).balance;
-        require(balanceAfter >= balanceBefore + fee, "Loan not repaid with fee");
+        // check repayment
+        uint256 fee = feeFor(amount);
+        require(address(this).balance >= balanceBefore + fee, "Loan not repaid with fee");
     }
 
     // allow deposits
     receive() external payable {}
-}
-
-interface IFlashLoanReceiver {
-    function executeOnLoan(uint256 amount, uint256 feeBps) external payable;
 }
