@@ -14,7 +14,6 @@
     "hardhat": "^2.24.0"
   },
   "scripts": {
-    "node": "hardhat node --hostname 0.0.0.0",
-    "deploy-local": "hardhat run scripts/deploy.js --network localhost"
+    "deploy-local": "npx hardhat run scripts/deploy.js"
   }
 }
