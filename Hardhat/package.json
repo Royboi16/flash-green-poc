@@ -17,3 +17,4 @@
     "node": "hardhat node --hostname 0.0.0.0",
     "deploy-local": "hardhat run scripts/deploy.js --network localhost"
   }
+}
