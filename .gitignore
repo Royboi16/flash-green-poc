@@ -1,0 +1,17 @@
+cat <<EOF > .gitignore
+# macOS
+.DS_Store
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Poetry virtualenvs
+.venv/
+
+# SQLite DB
+data/flash_green.db
+
+# Logs, caches, etc.
+*.log
+EOF
