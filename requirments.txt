@@ -1,11 +1,18 @@
 # --- core ---
 aiohttp>=3.9
 pydantic>=2.6
+pydantic-settings>=2.1
 prometheus_client>=0.20
 numpy>=1.26
 pandas>=2.2
 numba>=0.59              # optional GPU / JIT speed‑ups
 rich>=13.7               # pretty console logs
+loguru>=0.7
+fastapi>=0.115.12
+uvicorn>=0.34.1
+httpx>=0.24
+ccxt>=4.4.91
+requests>=2.31.0
 
 # --- testing ---
 pytest>=8.1
