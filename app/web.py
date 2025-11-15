@@ -8,7 +8,12 @@ from datetime import datetime
 
 from app import logger
 from app.metrics import METRICS
-from app.storage import get_trades, get_open_orders
+from app.storage import (
+    get_trades,
+    get_open_orders,
+    get_loan_events,
+    get_loan_balances,
+)
 from fastapi.responses import PlainTextResponse
 
 api = FastAPI(
@@ -38,6 +43,31 @@ class OrderOut(BaseModel):
     qty_filled: float
     avg_price: float
     status: str
+
+    class Config:
+        from_attributes = True
+
+
+class LoanEventOut(BaseModel):
+    id: int
+    reference: Optional[str]
+    event_type: str
+    asset: str
+    amount: float
+    fee_bps: float
+    tx_hash: Optional[str]
+    chain_id: Optional[int]
+    metadata: Optional[dict]
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LoanBalanceOut(BaseModel):
+    asset: str
+    outstanding: float
+    updated_at: datetime
 
     class Config:
         from_attributes = True
@@ -84,3 +114,14 @@ async def open_orders():
         return PlainTextResponse(
             "Internal Server Error fetching open orders", status_code=500
         )
+
+@api.get("/loans/events", response_model=List[LoanEventOut])
+async def loan_events(limit: int = 100):
+    """Loan drawdown/repayment audit log."""
+    return get_loan_events(limit)
+
+
+@api.get("/loans/balances", response_model=List[LoanBalanceOut])
+async def loan_balances():
+    """Outstanding balances per loan asset."""
+    return get_loan_balances()
