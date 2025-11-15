@@ -1,15 +1,15 @@
 # app/web.py
-from fastapi import FastAPI
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-from fastapi.responses import Response
-from typing import List, Optional
-from pydantic import BaseModel
 from datetime import datetime
+from typing import List, Optional
 
-from app import logger
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse, Response
+from pydantic import BaseModel
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from app.logger import logger
 from app.metrics import METRICS
-from app.storage import get_trades, get_open_orders
-from fastapi.responses import PlainTextResponse
+from app.storage import get_open_orders, get_trades
 
 api = FastAPI(
     title="Flash-Green PoC",
@@ -19,6 +19,8 @@ api = FastAPI(
 )
 
 # ─── Models for serialization ────────────────────────────────────────────────
+
+
 class TradeOut(BaseModel):
     id: int
     timestamp: datetime
@@ -29,6 +31,7 @@ class TradeOut(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class OrderOut(BaseModel):
     id: Optional[str]
@@ -44,14 +47,18 @@ class OrderOut(BaseModel):
 
 
 # ─── Health & metrics ────────────────────────────────────────────────────────
+
+
 @api.get("/healthz")
 async def health():
     return {"status": "ok"}
+
 
 @api.get("/metrics")
 async def prom():
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+
 
 @api.get("/pnl")
 async def pnl():
@@ -62,12 +69,14 @@ async def pnl():
 
 
 # ─── Data endpoints ──────────────────────────────────────────────────────────
+
+
 @api.get("/trades", response_model=List[TradeOut])
 async def trades(limit: int = 100):
     """
     Retrieve up to `limit` most recent trades.
     """
-    return get_trades(limit)
+    return get_trades()[:limit]
 
 
 @api.get("/orders/open", response_model=List[OrderOut])
@@ -77,7 +86,7 @@ async def open_orders():
     """
     try:
         return get_open_orders()
-    except Exception as e:
+    except Exception:
         # log full traceback
         logger.error("Error in /orders/open", exc_info=True)
         # return a plain-text 500 so the client sees something legible

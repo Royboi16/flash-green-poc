@@ -1,7 +1,5 @@
 # app/loan_web3.py
-
-import os
-from web3 import Web3, HTTPProvider
+from web3 import HTTPProvider, Web3
 
 # ABI snippet for FlashLoan.flashLoan
 FLASH_LOAN_ABI = [
@@ -39,21 +37,31 @@ class Web3FlashLoan:
 
         # 3) set up our account and contract
         self.account = self.w3.eth.account.from_key(private_key)
-        self.lender  = self.w3.eth.contract(address=lender_address, abi=FLASH_LOAN_ABI)
+        self.lender = self.w3.eth.contract(
+            address=lender_address,
+            abi=FLASH_LOAN_ABI,
+        )
 
     def flash_loan(self, receiver_address: str, amount_wei: int):
         # build the transaction
-        tx = self.lender.functions.flashLoan(receiver_address, amount_wei).build_transaction({
-            "from":     self.account.address,
-            "nonce":    self.w3.eth.get_transaction_count(self.account.address),
-            "gas":      300_000,
-            "gasPrice": self.w3.eth.gas_price,
-            "chainId":  self.chain_id,
-        })
+        tx = self.lender.functions.flashLoan(
+            receiver_address,
+            amount_wei,
+        ).build_transaction(
+            {
+                "from": self.account.address,
+                "nonce": self.w3.eth.get_transaction_count(
+                    self.account.address
+                ),
+                "gas": 300_000,
+                "gasPrice": self.w3.eth.gas_price,
+                "chainId": self.chain_id,
+            }
+        )
 
         # sign & send
-        signed  = self.account.sign_transaction(tx)
-        raw     = signed.raw_transaction
+        signed = self.account.sign_transaction(tx)
+        raw = signed.raw_transaction
         tx_hash = self.w3.eth.send_raw_transaction(raw)
 
         # wait for it to be mined

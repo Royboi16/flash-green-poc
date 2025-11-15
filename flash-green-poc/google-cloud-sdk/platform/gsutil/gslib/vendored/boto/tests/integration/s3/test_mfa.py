@@ -16,7 +16,7 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABIL-
 # ITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
@@ -31,7 +31,6 @@ from nose.plugins.attrib import attr
 
 from boto.s3.connection import S3Connection
 from boto.exception import S3ResponseError
-from boto.s3.deletemarker import DeleteMarker
 
 
 @attr('notdefault', 's3mfa')
@@ -49,9 +48,13 @@ class S3MFATest (unittest.TestCase):
 
     def test_mfadel(self):
         # Enable Versioning with MfaDelete
-        mfa_sn = raw_input('MFA S/N: ')
-        mfa_code = raw_input('MFA Code: ')
-        self.bucket.configure_versioning(True, mfa_delete=True, mfa_token=(mfa_sn, mfa_code))
+        mfa_sn = input('MFA S/N: ')
+        mfa_code = input('MFA Code: ')
+        self.bucket.configure_versioning(
+            True,
+            mfa_delete=True,
+            mfa_token=(mfa_sn, mfa_code),
+        )
 
         # Check enabling mfa worked.
         i = 0
@@ -77,12 +80,20 @@ class S3MFATest (unittest.TestCase):
             pass
 
         # Now try delete again with the MFA token
-        mfa_code = raw_input('MFA Code: ')
-        self.bucket.delete_key('foobar', version_id=v1, mfa_token=(mfa_sn, mfa_code))
+        mfa_code = input('MFA Code: ')
+        self.bucket.delete_key(
+            'foobar',
+            version_id=v1,
+            mfa_token=(mfa_sn, mfa_code),
+        )
 
         # Next suspend versioning and disable MfaDelete on the bucket
-        mfa_code = raw_input('MFA Code: ')
-        self.bucket.configure_versioning(False, mfa_delete=False, mfa_token=(mfa_sn, mfa_code))
+        mfa_code = input('MFA Code: ')
+        self.bucket.configure_versioning(
+            False,
+            mfa_delete=False,
+            mfa_token=(mfa_sn, mfa_code),
+        )
 
         # Lastly, check disabling mfa worked.
         i = 0

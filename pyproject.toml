@@ -37,8 +37,16 @@ requests = "^2.31.0"
 pytest     = "^8.1"
 hypothesis = "^6.98"
 
+[tool.poetry.group.dev.dependencies]
+flake8 = "^7.1"
+
 [tool.poetry.extras]
 hardhat = ["web3", "python-dotenv"]
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+exclude = [".venv", "build", "dist", "Hardhat", "infra"]
 
 ############################
 # 3.  Build system hook

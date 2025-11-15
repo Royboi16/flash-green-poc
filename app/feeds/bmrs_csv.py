@@ -1,7 +1,10 @@
-import csv, itertools
-from pathlib import Path
+import csv
+import itertools
 from datetime import datetime
+from pathlib import Path
+
 from .base import MarketAdapter
+
 
 class BMRSCsvFeed(MarketAdapter):
     def __init__(self, csv_path: str):
@@ -20,9 +23,8 @@ class BMRSCsvFeed(MarketAdapter):
     def quote(self) -> float:
         return float(self._current["price_gbp_per_mwh"])
 
-    def advance(self, _now: datetime = None) -> None:
+    def advance(self, _now: datetime | None = None) -> None:
         try:
             self._current = next(self._stream)
         except StopIteration:
             self._stream = itertools.cycle([self._current])  # hold last
-

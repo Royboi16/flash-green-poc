@@ -2,6 +2,7 @@
 import time
 from contextlib import contextmanager
 
+
 class RevertableLoanError(Exception):
     pass
 
@@ -15,11 +16,10 @@ def flash_loan(limit_gbp: float, timeout_s: int = 30):
     start = time.time()
     balance = {"gbp": limit_gbp}
 
-    yield balance            # ---------- user code runs here ----------
+    yield balance
 
     delta = balance["gbp"]         # should be back at 0
     if delta != 0 or time.time() - start > timeout_s:
         raise RevertableLoanError(
             f"Flash-loan NOT repaid: {delta:+.2f} GBP after {timeout_s}s"
         )
-
