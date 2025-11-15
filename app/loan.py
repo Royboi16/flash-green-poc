@@ -1,25 +1,47 @@
 # app/loan.py
 import time
 from contextlib import contextmanager
+from typing import List, Optional
+
 
 class RevertableLoanError(Exception):
     pass
 
 
 @contextmanager
-def flash_loan(limit_gbp: float, timeout_s: int = 30):
-    """
-    Pretend we just borrowed `limit_gbp` with zero collateral.
-    If the caller fails to repay by exiting the context, we raise.
-    """
+def flash_loan(
+    limit_gbp: float,
+    timeout_s: int = 30,
+    principal_asset: str = "gbp",
+    repayment_assets: Optional[List[str]] = None,
+):
+    """Simulate a multi-asset flash-loan ledger."""
+
+    if repayment_assets:
+        seen: List[str] = []
+        for asset in repayment_assets:
+            if asset not in seen:
+                seen.append(asset)
+        assets = seen
+    else:
+        assets = [principal_asset]
+    if principal_asset not in assets:
+        assets.insert(0, principal_asset)
+
     start = time.time()
-    balance = {"gbp": limit_gbp}
+    balance = {asset: 0.0 for asset in assets}
+    balance[principal_asset] = limit_gbp
 
     yield balance            # ---------- user code runs here ----------
 
-    delta = balance["gbp"]         # should be back at 0
-    if delta != 0 or time.time() - start > timeout_s:
+    elapsed = time.time() - start
+    if elapsed > timeout_s:
         raise RevertableLoanError(
-            f"Flash-loan NOT repaid: {delta:+.2f} GBP after {timeout_s}s"
+            f"Flash-loan window exceeded: {elapsed:.2f}s > {timeout_s}s"
         )
 
+    offenders = [asset for asset, value in balance.items() if abs(value) > 1e-9]
+    if offenders:
+        raise RevertableLoanError(
+            f"Flash-loan NOT repaid on assets: {', '.join(offenders)}"
+        )

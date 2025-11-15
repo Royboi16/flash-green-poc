@@ -7,6 +7,7 @@ loops forever once every second.
 import os
 from datetime import datetime, date
 from time import sleep
+from uuid import uuid4
 
 from app.logger import logger
 from app.metrics import METRICS
@@ -16,6 +17,8 @@ from app.storage import (
     get_open_orders,
     save_order,
     update_order,
+    record_loan_drawdown,
+    record_loan_repayment,
     Order,
 )
 from app.config import settings
@@ -58,6 +61,11 @@ def _today() -> date:
 # Globals to track daily PnL
 _current_day: date = _today()
 _daily_loss:   float = 0.0
+
+
+def _new_loan_reference() -> str:
+    stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    return f"loan-{stamp}-{uuid4().hex[:8]}"
 
 def _settle_open_orders(pl):
     for o in get_open_orders():
@@ -127,27 +135,74 @@ def run_cycle() -> bool:
         METRICS.trades_blocked.inc()
         return False
 
+    loan_amount = settings.loan_size_gbp
+    fee_gbp = loan_amount * settings.loan_fee_bps / 10_000
+    repayment_total = loan_amount + fee_gbp
+    repayment_assets = list(settings.loan_repayment_assets or [settings.loan_principal_asset])
+
     # ── On‐chain flash‐loan branch ─────────────────────────────────────────────
     if os.getenv("USE_WEB3_LOAN") == "1":
         if not settings.receiver_address:
             raise RuntimeError(
                 "USE_WEB3_LOAN=1 but FLASH_LOAN_RECEIVER is not set"
             )
+        if not settings.flash_loan_contract:
+            raise RuntimeError(
+                "USE_WEB3_LOAN=1 but FLASH_LOAN_CONTRACT is not set"
+            )
+        private_key = os.getenv("LENDER_KEY")
+        if not private_key:
+            raise RuntimeError("USE_WEB3_LOAN=1 but LENDER_KEY is missing")
 
+        rpc_url = settings.rpc_url_for_network()
         loan = FlashLoanAdapter(
             lender_address=settings.flash_loan_contract,
-            private_key=os.getenv("LENDER_KEY"),
+            private_key=private_key,
+            network=settings.flash_loan_network,
+            rpc_url=rpc_url,
         )
-        receipt = loan.flash_loan(
+        reference = _new_loan_reference()
+        record_loan_drawdown(
+            asset=settings.loan_principal_asset,
+            amount=loan_amount,
+            fee_bps=settings.loan_fee_bps,
+            reference=reference,
+            metadata={"mode": "web3", "network": settings.flash_loan_network},
+        )
+        amount_wei = int(loan_amount * (10 ** settings.loan_asset_decimals))
+        meta, decoded_event = loan.flash_loan(
             receiver_address=settings.receiver_address,
-            amount_wei=100_000 * 10**18,
+            amount_wei=amount_wei,
+            expected_fee_bps=settings.loan_fee_bps,
+        )
+        record_loan_repayment(
+            asset=settings.loan_principal_asset,
+            amount=repayment_total,
+            fee_bps=settings.loan_fee_bps,
+            reference=reference,
+            tx_hash=meta["transactionHash"],
+            chain_id=loan.chain_id,
+            metadata={"event": decoded_event, **meta},
         )
         return True
 
     # ── Mock flash‐loan branch ─────────────────────────────────────────────────
     else:
-        with FlashLoanAdapter(limit_gbp=100_000) as wallet:
+        with FlashLoanAdapter(
+            limit_gbp=loan_amount,
+            principal_asset=settings.loan_principal_asset,
+            repayment_assets=repayment_assets,
+        ) as wallet:
             try:
+                reference = _new_loan_reference()
+                record_loan_drawdown(
+                    asset=settings.loan_principal_asset,
+                    amount=loan_amount,
+                    fee_bps=settings.loan_fee_bps,
+                    reference=reference,
+                    metadata={"mode": "sim"},
+                )
+                cash_balance = loan_amount
                 # Leg A – buy power at current spot price cap
                 try:
                     fill_a = pl.buy(qty, max_price=spot)
@@ -167,15 +222,23 @@ def run_cycle() -> bool:
                     status="PENDING",
                 ))
 
-                # Leg A funds returned
-                wallet["gbp"] += fill_a.qty_mwh * fill_a.price
+                cash_balance -= fill_a.qty_mwh * fill_a.price
 
                 # Leg B – short Baseload future
                 fill_b = ice.sell(qty)
-                wallet["gbp"] += fill_b.qty_mwh * fill_b.price
+                cash_balance += fill_b.qty_mwh * fill_b.price
+
+                if cash_balance < repayment_total:
+                    logger.error(
+                        "Insufficient GBP to settle flash-loan: cash=%.2f required=%.2f",
+                        cash_balance,
+                        repayment_total,
+                    )
+                    METRICS.trades_blocked.inc()
+                    return False
 
                 # Record PnL
-                profit = wallet["gbp"] - 100_000
+                profit = cash_balance - repayment_total
                 if profit >= 0:
                     METRICS.profit_positive.inc(profit)
                 else:
@@ -185,6 +248,14 @@ def run_cycle() -> bool:
                 if profit < 0:
                     _daily_loss += -profit
                     METRICS.daily_loss.set(_daily_loss)
+
+                record_loan_repayment(
+                    asset=settings.loan_principal_asset,
+                    amount=repayment_total,
+                    fee_bps=settings.loan_fee_bps,
+                    reference=reference,
+                    metadata={"mode": "sim", "profit": profit},
+                )
 
                 save_trade(
                     qty_mwh=qty,
@@ -197,7 +268,8 @@ def run_cycle() -> bool:
 
             finally:
                 # ALWAYS repay principal before context exits
-                wallet["gbp"] = 0
+                for asset in set(repayment_assets + [settings.loan_principal_asset]):
+                    wallet[asset] = 0.0
 
 # ---------------------------------------------------------------------------
 # Simple CLI loop

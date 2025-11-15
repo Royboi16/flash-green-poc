@@ -11,7 +11,7 @@ Priority:
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 from pydantic import AnyUrl, Field, model_validator
 from pydantic_settings import BaseSettings
 from typing import Literal, Optional
@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     max_notional_per_trade:float   = Field(10_000.0, description="Max exposure per cycle (£)")
     max_daily_loss_gbp:    float   = Field(500.0,    description="Stop trading after this daily loss (£)")
 
+    loan_size_gbp:     PositiveFloat = Field(100_000.0, description="Principal borrowed each flash-loan (£)")
+    loan_fee_bps:      float         = Field(0.0,      description="Fee charged by the lender (basis points)")
+    loan_principal_asset: str        = Field("gbp",   description="Ledger key representing the borrowed asset")
+    loan_repayment_assets: List[str] = Field(
+        default_factory=lambda: ["gbp"],
+        description="Ledger assets that must be zeroed before a loan settles",
+    )
+    loan_asset_decimals: int = Field(18, description="Decimals used when mirroring GBP on-chain")
+
     # ── Phase 8: live‐feed knobs ───────────────────────────────────────────
     use_live_feed:     bool           = Field(False,
                                               description="Enable live CCXT feed")
@@ -74,6 +83,19 @@ class Settings(BaseSettings):
     ice_user:     Optional[str] = None
     ice_pass:     Optional[str] = None
     hardhat_rpc:  Optional[AnyUrl] = Field("http://127.0.0.1:8545", description="EVM RPC")
+    anvil_rpc:    Optional[AnyUrl] = Field(None, description="Anvil RPC override")
+    sepolia_rpc:  Optional[AnyUrl] = Field(None, description="Sepolia RPC override")
+    mainnet_rpc:  Optional[AnyUrl] = Field(None, description="Mainnet RPC override")
+    flash_loan_network: Literal["hardhat", "anvil", "sepolia", "mainnet", "custom"] = Field(
+        "hardhat",
+        env="FLASH_LOAN_NETWORK",
+        description="Select which deployment network to target",
+    )
+    flash_loan_rpc_url: Optional[AnyUrl] = Field(
+        None,
+        env="FLASH_LOAN_RPC_URL",
+        description="Explicit RPC URL (overrides network defaults)",
+    )
 
     # ----------------------------------------------------------------------
     # On-chain flash-loan contract (Hardhat/EVM)
@@ -92,6 +114,19 @@ class Settings(BaseSettings):
         env="FLASH_LOAN_RECEIVER",
         description="Address of the deployed TestReceiver contract (required if USE_WEB3_LOAN=1)",
     )
+
+    def rpc_url_for_network(self) -> Optional[str]:
+        """Resolve the RPC URL for the configured network."""
+        if self.flash_loan_rpc_url:
+            return str(self.flash_loan_rpc_url)
+        mapping = {
+            "hardhat": self.hardhat_rpc,
+            "anvil": self.anvil_rpc,
+            "sepolia": self.sepolia_rpc,
+            "mainnet": self.mainnet_rpc,
+        }
+        value = mapping.get(self.flash_loan_network)
+        return str(value) if value else None
     
     # ── Phase 2: order‐book micro‐sim knobs ────────────────────────────
     use_depth_sim:       bool    = Field(False, description="Enable orderbook micro-sim")
