@@ -134,9 +134,22 @@ def run_cycle() -> bool:
                 "USE_WEB3_LOAN=1 but FLASH_LOAN_RECEIVER is not set"
             )
 
+        lender_key = os.getenv("LENDER_KEY")
+        if not lender_key:
+            raise RuntimeError(
+                "USE_WEB3_LOAN=1 but LENDER_KEY is not set"
+            )
+
+        rpc_url = settings.hardhat_rpc
+        if not rpc_url:
+            raise RuntimeError(
+                "USE_WEB3_LOAN=1 but HARDHAT_RPC is not configured"
+            )
+
         loan = FlashLoanAdapter(
             lender_address=settings.flash_loan_contract,
-            private_key=os.getenv("LENDER_KEY"),
+            private_key=lender_key,
+            rpc_url=rpc_url,
         )
         receipt = loan.flash_loan(
             receiver_address=settings.receiver_address,
