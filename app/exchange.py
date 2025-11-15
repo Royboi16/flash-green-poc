@@ -1,10 +1,15 @@
 # app/exchange.py
 import time
 from dataclasses import dataclass
-from app.feeds.bmrs_csv import BMRSCsvFeed
-from app.feeds.ice_csv import ICECsvFeed
+from typing import Optional
+
 import ccxt
-from typing import Optional, NamedTuple
+
+from app.config import settings
+from app.feeds.bmrs_csv import BMRSCsvFeed
+from app.feeds.bmrs_rest import BMRSLiveFeed
+from app.feeds.ice_csv import ICECsvFeed
+from app.feeds.ice_rest import BrokerFuturesLiveFeed
 
 # our new book
 from app.orderbook import OrderBook, Level
@@ -15,8 +20,41 @@ class Fill:
     price: float
     order_id: Optional[str] = None
 
-_pl_feed = BMRSCsvFeed("data/bmrs_spot_uk_2024.csv")
-_ice_feed = ICECsvFeed("data/ice_baseload_q2_2024.csv")
+def _build_spot_feed():
+    if settings.use_live_feed:
+        if not settings.bmrs_api_key:
+            raise RuntimeError("BMRS live feed requires BMRS_API_KEY when use_live_feed=1")
+        return BMRSLiveFeed(api_key=settings.bmrs_api_key)
+    return BMRSCsvFeed("data/bmrs_spot_uk_2024.csv")
+
+
+def _build_futures_feed():
+    if settings.use_live_feed:
+        missing = [
+            name
+            for name, value in (
+                ("ice_api_url", settings.ice_api_url),
+                ("ice_user", settings.ice_user),
+                ("ice_pass", settings.ice_pass),
+                ("ice_symbol", settings.ice_symbol),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "ICE live feed misconfigured; set " + ", ".join(missing)
+            )
+        return BrokerFuturesLiveFeed(
+            base_url=str(settings.ice_api_url),
+            username=settings.ice_user,
+            password=settings.ice_pass,
+            symbol=settings.ice_symbol,
+        )
+    return ICECsvFeed("data/ice_baseload_q2_2024.csv")
+
+
+_pl_feed = _build_spot_feed()
+_ice_feed = _build_futures_feed()
 
 class PowerCsvExchange:
     def quote(self): return _pl_feed.quote()
