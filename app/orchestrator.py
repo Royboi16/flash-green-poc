@@ -4,7 +4,6 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
-import os
 from datetime import datetime, date
 from time import sleep
 
@@ -46,7 +45,7 @@ from app.exchange import IceCsvExchange
 ice = IceCsvExchange()
 
 # flash-loan adapter (unchanged)
-if os.getenv("USE_WEB3_LOAN") == "1":
+if settings.use_web3_loan:
     from app.loan_web3 import Web3FlashLoan as FlashLoanAdapter
 else:
     from app.loan import flash_loan as FlashLoanAdapter
@@ -128,15 +127,11 @@ def run_cycle() -> bool:
         return False
 
     # ── On‐chain flash‐loan branch ─────────────────────────────────────────────
-    if os.getenv("USE_WEB3_LOAN") == "1":
-        if not settings.receiver_address:
-            raise RuntimeError(
-                "USE_WEB3_LOAN=1 but FLASH_LOAN_RECEIVER is not set"
-            )
-
+    if settings.use_web3_loan:
         loan = FlashLoanAdapter(
             lender_address=settings.flash_loan_contract,
-            private_key=os.getenv("LENDER_KEY"),
+            private_key=settings.lender_private_key,
+            rpc_url=str(settings.hardhat_rpc),
         )
         receipt = loan.flash_loan(
             receiver_address=settings.receiver_address,
