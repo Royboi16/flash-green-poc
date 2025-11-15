@@ -7,6 +7,7 @@ loops forever once every second.
 import os
 from datetime import datetime, date
 from time import sleep
+from typing import Any, Dict, List, Tuple
 
 from app.logger import logger
 from app.metrics import METRICS
@@ -59,16 +60,110 @@ def _today() -> date:
 _current_day: date = _today()
 _daily_loss:   float = 0.0
 
-def _settle_open_orders(pl):
+def _settle_open_orders(pl) -> Tuple[List[str], List[Dict[str, Any]]]:
+    active: List[str] = []
+    requeue: List[Dict[str, float]] = []
     for o in get_open_orders():
-        data = pl._fetch_order(o.id)
+        try:
+            data = pl._fetch_order(o.id)
+        except RuntimeError as exc:
+            logger.error(f"Failed to fetch order {o.id} – {exc}")
+            continue
+
         stat = data["status"]
         filled = float(data.get("filled_qty", 0))
         avg_p = float(data.get("avg_price", 0))
-        # ←── ADD YOUR DEBUG LOG HERE ─────────────────────────────
-        # ── DEBUG: show what we're settling ────────────────────────────────
-        logger.debug(f"Settling order {o.id}: status={stat}, filled={filled}, avg_price={avg_p}")
-        update_order(o.id, filled, avg_p, stat)
+        logger.debug(
+            "Settling order %s: status=%s, filled=%s, avg_price=%s",
+            o.id,
+            stat,
+            filled,
+            avg_p,
+        )
+        update_order(
+            o.id,
+            qty_filled=filled,
+            avg_price=avg_p,
+            status=stat,
+            fill_history=data.get("executions"),
+            cancel_reason=data.get("cancel_reason"),
+            last_error=data.get("error"),
+        )
+
+        if data.get("is_active"):
+            active.append(o.id)
+            continue
+
+        remaining = max(o.qty_requested - filled, 0.0)
+        if o.side == "BUY" and remaining > 0 and stat != "FILLED":
+            requeue.append(
+                {
+                    "qty": remaining,
+                    "last_price": avg_p or o.avg_price,
+                    "reason": data.get("cancel_reason") or data.get("error") or "unknown",
+                }
+            )
+
+    return active, requeue
+
+
+def _place_buy_order(qty: float, price_cap: float, context: str = "primary"):
+    fill = pl.buy(qty, max_price=price_cap)
+    save_order(
+        Order(
+            id=fill.order_id,
+            symbol=settings.ice_symbol,
+            side="BUY",
+            qty_requested=qty,
+            qty_filled=fill.qty_mwh,
+            avg_price=fill.price,
+            status="PENDING",
+            fill_history=fill.executions,
+            last_error=fill.error,
+        )
+    )
+    logger.info(
+        "Placed %s ICE order %s qty=%.3f @≤%.2f – reported status=%s",
+        context,
+        fill.order_id,
+        qty,
+        price_cap,
+        fill.status,
+    )
+    if fill.status == "REJECTED" and fill.error:
+        logger.error("ICE rejected order %s: %s", fill.order_id, fill.error)
+    elif fill.status == "PARTIALLY_FILLED":
+        logger.warning("ICE order %s only partially filled", fill.order_id)
+    return fill
+
+
+def _process_requeue_tasks(tasks: List[Dict[str, Any]]) -> bool:
+    if not tasks:
+        return False
+
+    spot_hint = pl.quote()
+    placed = False
+    for task in tasks:
+        target = task.get("last_price") or spot_hint
+        bump = (settings.order_retry_price_bump_bp / 10_000)
+        price_cap = target * (1 + bump)
+        logger.warning(
+            "Retrying %.3f MWh buy after %s; new cap %.2f",
+            task["qty"],
+            task.get("reason"),
+            price_cap,
+        )
+        METRICS.order_retries.inc()
+        fill = _place_buy_order(task["qty"], price_cap, context="retry")
+        placed = True
+        if fill.status != "FILLED":
+            METRICS.order_retry_failures.inc()
+            logger.error(
+                "Retry order %s did not fill (status=%s)",
+                fill.order_id,
+                fill.status,
+            )
+    return placed
 
 def run_cycle() -> bool:
     global _current_day, _daily_loss
@@ -88,11 +183,14 @@ def run_cycle() -> bool:
         METRICS.daily_loss.set(_daily_loss)
 
     # if using live ICE, reconcile any in-flight orders first
+    requeue_tasks: List[Dict[str, Any]] = []
     if settings.use_ice_live:
-        _settle_open_orders(pl)
-        # if any still open, wait
-        if get_open_orders():
-            logger.info("Open orders pending, skipping this tick")
+        active_orders, requeue_tasks = _settle_open_orders(pl)
+        if active_orders:
+            logger.info("Open orders pending (%s), skipping this tick", len(active_orders))
+            return False
+        if _process_requeue_tasks(requeue_tasks):
+            # retries consume the tick; wait for fills before new trades
             return False
 
     # master switch
@@ -150,28 +248,32 @@ def run_cycle() -> bool:
             try:
                 # Leg A – buy power at current spot price cap
                 try:
-                    fill_a = pl.buy(qty, max_price=spot)
-                except RuntimeError:
-                    # If we still slip, skip this tick
+                    if settings.use_ice_live:
+                        fill_a = _place_buy_order(qty, price_cap=spot)
+                    else:
+                        fill_a = pl.buy(qty, max_price=spot)
+                except RuntimeError as exc:
+                    logger.error(f"Spot leg failed: {exc}")
                     return False
 
-                # ── Record the ICE buy order for idempotency ────────────────────
-                save_order(Order(
-                    id=fill_a.order_id,
-                    timestamp=datetime.utcnow(),
-                    symbol=settings.ice_symbol,
-                    side="BUY",
-                    qty_requested=qty,
-                    qty_filled=fill_a.qty_mwh,
-                    avg_price=fill_a.price,
-                    status="PENDING",
-                ))
+                if settings.use_ice_live and fill_a.status != "FILLED":
+                    logger.info(
+                        "ICE buy order %s returned %s – waiting for settlement",
+                        fill_a.order_id,
+                        fill_a.status,
+                    )
+                    return False
+
+                if fill_a.qty_mwh <= 0:
+                    logger.warning("Spot leg filled 0 MWh; aborting")
+                    return False
 
                 # Leg A funds returned
                 wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
-                # Leg B – short Baseload future
-                fill_b = ice.sell(qty)
+                # Leg B – short Baseload future matching executed qty
+                sell_qty = fill_a.qty_mwh
+                fill_b = ice.sell(sell_qty)
                 wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
                 # Record PnL
@@ -187,7 +289,7 @@ def run_cycle() -> bool:
                     METRICS.daily_loss.set(_daily_loss)
 
                 save_trade(
-                    qty_mwh=qty,
+                    qty_mwh=sell_qty,
                     spot_price=spot,
                     fut_price=fut,
                     profit=profit,

@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     # How long to poll before cancelling
     order_timeout_secs: int = Field(30, env="ORDER_TIMEOUT_SECS", description="Max seconds to wait for fill")
     order_poll_interval: float = Field(1.0, env="ORDER_POLL_INTERVAL", description="Seconds between fetch_order calls")
+    order_retry_price_bump_bp: float = Field(
+        25.0,
+        env="ORDER_RETRY_PRICE_BUMP_BP",
+        description="Basis-point bump applied to retry price caps",
+    )
     
     # Live ICE integration (optional unless USE_ICE_LIVE=1)
     use_ice_live:   bool              = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
