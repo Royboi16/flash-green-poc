@@ -53,11 +53,26 @@ def _load_vault_secret(addr: str, token: str, path: str) -> Dict[str, str]:
     client = hvac.Client(url=addr, token=token)
     if not client.is_authenticated():  # pragma: no cover - depends on remote Vault
         raise RuntimeError("Unable to authenticate with Vault. Check VAULT_TOKEN.")
-    response = client.secrets.kv.v2.read_secret_version(path=path)
+    normalised_path = _normalise_vault_secret_path(path)
+    response = client.secrets.kv.v2.read_secret_version(path=normalised_path)
     data = response.get("data", {}).get("data", {})
     if not isinstance(data, dict):
         raise RuntimeError("Vault secret payload must be a mapping")
     return data
+
+
+def _normalise_vault_secret_path(path: str) -> str:
+    """Return a mount-relative Vault KV path.
+
+    Templates/documentation historically used REST-style paths (e.g. ``secret/data/foo``)
+    whereas ``hvac`` expects mount-relative inputs. Normalising here lets both work.
+    """
+
+    cleaned = path.strip("/")
+    parts = cleaned.split("/")
+    if len(parts) >= 3 and parts[1] in {"data", "metadata"}:
+        return "/".join(parts[2:])
+    return cleaned
 
 
 def _load_aws_secret(region: str, secret_id: str) -> Dict[str, str]:

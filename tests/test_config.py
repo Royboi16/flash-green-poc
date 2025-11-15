@@ -73,3 +73,10 @@ def test_secret_backend_populates_missing_fields(monkeypatch):
 def test_secret_backend_requires_config():
     with pytest.raises(ValueError, match="SECRETS_BACKEND=vault"):
         _settings(secrets_backend="vault")
+
+
+def test_normalise_vault_secret_path_handles_rest_style():
+    assert config._normalise_vault_secret_path("secret/data/foo") == "foo"
+    assert config._normalise_vault_secret_path("/secret/data/foo/bar") == "foo/bar"
+    assert config._normalise_vault_secret_path("kv/metadata/nested/path") == "nested/path"
+    assert config._normalise_vault_secret_path("flash-green") == "flash-green"
