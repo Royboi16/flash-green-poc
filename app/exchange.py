@@ -1,10 +1,11 @@
 # app/exchange.py
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
+
 from app.feeds.bmrs_csv import BMRSCsvFeed
 from app.feeds.ice_csv import ICECsvFeed
 import ccxt
-from typing import Optional, NamedTuple
 
 # our new book
 from app.orderbook import OrderBook, Level
@@ -14,6 +15,9 @@ class Fill:
     qty_mwh: float
     price: float
     order_id: Optional[str] = None
+    status: str = "FILLED"
+    executions: List[dict[str, Any]] = field(default_factory=list)
+    error: Optional[str] = None
 
 _pl_feed = BMRSCsvFeed("data/bmrs_spot_uk_2024.csv")
 _ice_feed = ICECsvFeed("data/ice_baseload_q2_2024.csv")
