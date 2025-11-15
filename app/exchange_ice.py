@@ -1,31 +1,41 @@
-import os
 import time
 import requests
-from typing import Any, Dict
+
 from app.config import settings
 from app.exchange import Fill
 
+
 class ICEPowerExchange:
-    def __init__(self):
-        self.base_url   = settings.ice_api_url
-        self.api_key    = settings.ice_api_key
+    def __init__(self) -> None:
+        self.base_url = settings.ice_api_url
+        self.api_key = settings.ice_api_key
         self.api_secret = settings.ice_api_secret
-        self.symbol     = settings.ice_symbol
-        if not all([self.base_url, self.api_key, self.api_secret, self.symbol]):
+        self.symbol = settings.ice_symbol
+        required = (
+            self.base_url,
+            self.api_key,
+            self.api_secret,
+            self.symbol,
+        )
+        if not all(required):
             raise RuntimeError("Missing ICE live-trading config")
 
         self.session = requests.Session()
-        self.session.headers.update({
-            "X-API-KEY":    self.api_key,
-            "X-API-SECRET": self.api_secret,
-            "Content-Type": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "X-API-KEY": self.api_key,
+                "X-API-SECRET": self.api_secret,
+                "Content-Type": "application/json",
+            }
+        )
 
     def advance(self) -> None:
         return None
 
     def quote(self) -> float:
-        resp = self.session.get(f"{self.base_url}/marketdata/{self.symbol}/price")
+        resp = self.session.get(
+            f"{self.base_url}/marketdata/{self.symbol}/price"
+        )
         resp.raise_for_status()
         return float(resp.json()["last_price"])
 
@@ -60,7 +70,7 @@ class ICEPowerExchange:
             time.sleep(settings.order_poll_interval)
 
         else:
-            # timed out: cancel 
+            # timed out: cancel
             self.cancel_order(order_id)
 
         return Fill(qty_mwh=filled, price=avg_price, order_id=order_id)
@@ -103,4 +113,3 @@ class ICEPowerExchange:
 
     def cancel_order(self, order_id: str) -> None:
         self.session.delete(f"{self.base_url}/orders/{order_id}")
-

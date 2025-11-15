@@ -1,11 +1,13 @@
 # app/orderbook.py
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
+
 
 @dataclass
 class Level:
     price: float
-    size:  float  # how much volume sits at this price
+    size: float  # how much volume sits at this price
+
 
 class OrderBook:
     def __init__(self, bids: List[Level], asks: List[Level]):
@@ -31,8 +33,10 @@ class OrderBook:
 
         filled = qty - remaining
         if filled <= 0:
-            raise RuntimeError(f"No liquidity to buy {qty} MWh at ≤£{max_price:.2f}")
-        return Level(price=cost/filled, size=filled)
+            raise RuntimeError(
+                f"No liquidity to buy {qty} MWh at ≤£{max_price:.2f}"
+            )
+        return Level(price=cost / filled, size=filled)
 
     def match_sell(self, qty: float, min_price: float) -> Level:
         """
@@ -51,5 +55,7 @@ class OrderBook:
         filled = qty - remaining
         # require full fill
         if filled < qty:
-            raise RuntimeError(f"No liquidity to sell {qty} MWh at ≥£{min_price:.2f}")
-        return Level(price=proceeds/filled, size=filled)
+            raise RuntimeError(
+                f"No liquidity to sell {qty} MWh at ≥£{min_price:.2f}"
+            )
+        return Level(price=proceeds / filled, size=filled)

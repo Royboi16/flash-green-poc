@@ -1,6 +1,8 @@
 # tests/test_orchestrator.py
 import pytest
+
 from app.orchestrator import run_cycle
+
 
 def test_pnl_positive():
     for _ in range(100):
@@ -10,4 +12,3 @@ def test_pnl_positive():
         pytest.skip("No trade fired")
 
     # scrape prometheus or patch METRICS to assert profit > 0
-

@@ -1,7 +1,11 @@
-import csv, itertools, random
-from pathlib import Path
+import csv
+import itertools
+import random
 from datetime import datetime
+from pathlib import Path
+
 from .base import MarketAdapter
+
 
 class ICECsvFeed(MarketAdapter):
     def __init__(self, csv_path: str):
@@ -21,6 +25,5 @@ class ICECsvFeed(MarketAdapter):
         base = float(self._current["price_gbp_per_mwh"])
         return round(base + random.gauss(0, 0.8), 2)  # tiny intraday wiggle
 
-    def advance(self, _now: datetime = None) -> None:
+    def advance(self, _now: datetime | None = None) -> None:
         self._current = next(self._cycle)
-

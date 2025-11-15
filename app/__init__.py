@@ -39,4 +39,3 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 logger.info(f"flash_green_poc {__version__} loaded.")
-
