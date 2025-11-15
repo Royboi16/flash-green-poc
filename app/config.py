@@ -73,7 +73,11 @@ class Settings(BaseSettings):
     bmrs_api_key: Optional[str] = None
     ice_user:     Optional[str] = None
     ice_pass:     Optional[str] = None
-    hardhat_rpc:  Optional[AnyUrl] = Field("http://127.0.0.1:8545", description="EVM RPC")
+    hardhat_rpc:  Optional[AnyUrl] = Field(
+        "http://127.0.0.1:8545",
+        env="HARDHAT_RPC",
+        description="HTTP RPC endpoint for Hardhat or another EVM node",
+    )
 
     # ----------------------------------------------------------------------
     # On-chain flash-loan contract (Hardhat/EVM)
