@@ -40,6 +40,9 @@ hypothesis = "^6.98"
 [tool.poetry.extras]
 hardhat = ["web3", "python-dotenv"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 ############################
 # 3.  Build system hook
 ############################
