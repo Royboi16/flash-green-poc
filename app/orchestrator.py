@@ -5,8 +5,10 @@ loops forever once every second.
 """
 
 import os
+import sys
+from contextlib import contextmanager
 from datetime import datetime, date
-from time import sleep
+from time import perf_counter, sleep
 
 from app.logger import logger
 from app.metrics import METRICS
@@ -70,6 +72,39 @@ def _settle_open_orders(pl):
         logger.debug(f"Settling order {o.id}: status={stat}, filled={filled}, avg_price={avg_p}")
         update_order(o.id, filled, avg_p, stat)
 
+
+def _time_dependency(latency_metric, failure_counter, func, *args, **kwargs):
+    start = perf_counter()
+    try:
+        return func(*args, **kwargs)
+    except Exception:
+        failure_counter.inc()
+        raise
+    finally:
+        latency_metric.set((perf_counter() - start) * 1000.0)
+
+
+@contextmanager
+def _instrumented_flash_loan(**kwargs):
+    start = perf_counter()
+    loan = FlashLoanAdapter(**kwargs)
+    try:
+        wallet = loan.__enter__()
+    except Exception:
+        METRICS.flash_loan_failures.inc()
+        METRICS.flash_loan_latency_ms.set((perf_counter() - start) * 1000.0)
+        raise
+    else:
+        METRICS.flash_loan_latency_ms.set((perf_counter() - start) * 1000.0)
+
+    try:
+        yield wallet
+    except Exception:
+        METRICS.flash_loan_failures.inc()
+        raise
+    finally:
+        loan.__exit__(*sys.exc_info())
+
 def run_cycle() -> bool:
     global _current_day, _daily_loss
     
@@ -90,14 +125,22 @@ def run_cycle() -> bool:
     # if using live ICE, reconcile any in-flight orders first
     if settings.use_ice_live:
         _settle_open_orders(pl)
-        # if any still open, wait
-        if get_open_orders():
+        pending_orders = get_open_orders()
+        if pending_orders:
+            exposure = sum(
+                max(order.qty_requested - order.qty_filled, 0) * order.avg_price
+                for order in pending_orders
+            )
+            METRICS.open_exposure_gbp.set(exposure)
             logger.info("Open orders pending, skipping this tick")
             return False
+
+    METRICS.open_exposure_gbp.set(0)
 
     # master switch
     if not settings.trading_enabled:
         METRICS.trades_blocked.inc()
+        METRICS.open_exposure_gbp.set(0)
         return False
 
     # advance both feeds each tick
@@ -105,8 +148,8 @@ def run_cycle() -> bool:
     pl.advance()
     ice.advance()
 
-    spot = pl.quote()
-    fut  = ice.quote()
+    spot = _time_dependency(METRICS.power_latency_ms, METRICS.power_api_failures, pl.quote)
+    fut  = _time_dependency(METRICS.ice_latency_ms, METRICS.ice_api_failures, ice.quote)
     logger.debug(f"TICK:   spot={spot!r}, fut={fut!r}, spread={fut-spot!r}")
 
     trade, qty, spread = should_trade(spot, fut)
@@ -116,6 +159,7 @@ def run_cycle() -> bool:
     logger.debug(f"DEBUG tick: spot={spot}, fut={fut}, spread={spread}, trade={trade}, qty={qty}")
     
     if not trade:
+        METRICS.open_exposure_gbp.set(0)
         return False
 
     # notional check (qty×spot gives £ exposure)
@@ -125,7 +169,10 @@ def run_cycle() -> bool:
             f"Notional £{notional:.2f} > cap £{settings.max_notional_per_trade}"
         )
         METRICS.trades_blocked.inc()
+        METRICS.open_exposure_gbp.set(0)
         return False
+
+    METRICS.open_exposure_gbp.set(notional)
 
     # ── On‐chain flash‐loan branch ─────────────────────────────────────────────
     if os.getenv("USE_WEB3_LOAN") == "1":
@@ -138,21 +185,32 @@ def run_cycle() -> bool:
             lender_address=settings.flash_loan_contract,
             private_key=os.getenv("LENDER_KEY"),
         )
-        receipt = loan.flash_loan(
+        receipt = _time_dependency(
+            METRICS.flash_loan_latency_ms,
+            METRICS.flash_loan_failures,
+            loan.flash_loan,
             receiver_address=settings.receiver_address,
             amount_wei=100_000 * 10**18,
         )
+        METRICS.open_exposure_gbp.set(0)
         return True
 
     # ── Mock flash‐loan branch ─────────────────────────────────────────────────
     else:
-        with FlashLoanAdapter(limit_gbp=100_000) as wallet:
+        with _instrumented_flash_loan(limit_gbp=100_000) as wallet:
             try:
                 # Leg A – buy power at current spot price cap
                 try:
-                    fill_a = pl.buy(qty, max_price=spot)
+                    fill_a = _time_dependency(
+                        METRICS.power_latency_ms,
+                        METRICS.power_api_failures,
+                        pl.buy,
+                        qty,
+                        max_price=spot,
+                    )
                 except RuntimeError:
                     # If we still slip, skip this tick
+                    METRICS.open_exposure_gbp.set(0)
                     return False
 
                 # ── Record the ICE buy order for idempotency ────────────────────
@@ -171,7 +229,12 @@ def run_cycle() -> bool:
                 wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
                 # Leg B – short Baseload future
-                fill_b = ice.sell(qty)
+                fill_b = _time_dependency(
+                    METRICS.ice_latency_ms,
+                    METRICS.ice_api_failures,
+                    ice.sell,
+                    qty,
+                )
                 wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
                 # Record PnL
@@ -198,6 +261,7 @@ def run_cycle() -> bool:
             finally:
                 # ALWAYS repay principal before context exits
                 wallet["gbp"] = 0
+                METRICS.open_exposure_gbp.set(0)
 
 # ---------------------------------------------------------------------------
 # Simple CLI loop

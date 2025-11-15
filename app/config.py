@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     trading_enabled:       bool    = Field(True,     description="Global master switch")
     max_notional_per_trade:float   = Field(10_000.0, description="Max exposure per cycle (£)")
     max_daily_loss_gbp:    float   = Field(500.0,    description="Stop trading after this daily loss (£)")
+    default_fx_currency:   str     = Field("GBP",    description="Fallback currency code for trades & balances")
+    default_counterparty_id: str   = Field("INTERNAL", description="Default counterparty identifier")
 
     # ── Phase 8: live‐feed knobs ───────────────────────────────────────────
     use_live_feed:     bool           = Field(False,

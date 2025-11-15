@@ -7,8 +7,15 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app import logger
+from app.config import settings
 from app.metrics import METRICS
-from app.storage import get_trades, get_open_orders
+from app.storage import (
+    get_cash_balances,
+    get_open_orders,
+    get_positions,
+    get_risk_events,
+    get_trades,
+)
 from fastapi.responses import PlainTextResponse
 
 api = FastAPI(
@@ -26,6 +33,8 @@ class TradeOut(BaseModel):
     spot_price: float
     fut_price: float
     profit: float
+    fx_currency: str
+    counterparty_id: str
 
     class Config:
         from_attributes = True
@@ -38,6 +47,45 @@ class OrderOut(BaseModel):
     qty_filled: float
     avg_price: float
     status: str
+    fx_currency: str
+    counterparty_id: str
+
+    class Config:
+        from_attributes = True
+
+
+class PositionOut(BaseModel):
+    symbol: str
+    qty_mwh: float
+    avg_price: float
+    fx_currency: str
+    counterparty_id: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CashBalanceOut(BaseModel):
+    account_id: str
+    currency: str
+    balance: float
+    counterparty_id: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RiskEventOut(BaseModel):
+    id: Optional[int]
+    event_type: str
+    severity: str
+    description: str
+    counterparty_id: str
+    fx_currency: str
+    exposure: float
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -84,3 +132,37 @@ async def open_orders():
         return PlainTextResponse(
             "Internal Server Error fetching open orders", status_code=500
         )
+
+
+@api.get("/positions", response_model=List[PositionOut])
+async def positions():
+    """Expose the latest internal positions for reconciliation."""
+
+    return get_positions()
+
+
+@api.get("/cash/balances", response_model=List[CashBalanceOut])
+async def cash_balances():
+    """Surface cash ledgers for controllers."""
+
+    return get_cash_balances()
+
+
+@api.get("/risk/events", response_model=List[RiskEventOut])
+async def risk_events(limit: int = 100):
+    """Return recent risk-limit events."""
+
+    return get_risk_events(limit)
+
+
+@api.get("/limits")
+async def limits_state():
+    """Provide limit configuration and live exposure state."""
+
+    return {
+        "trading_enabled": settings.trading_enabled,
+        "max_notional_per_trade": settings.max_notional_per_trade,
+        "max_daily_loss_gbp": settings.max_daily_loss_gbp,
+        "current_daily_loss_gbp": METRICS.daily_loss._value.get(),
+        "open_exposure_gbp": METRICS.open_exposure_gbp._value.get(),
+    }
