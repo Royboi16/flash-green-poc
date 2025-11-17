@@ -54,12 +54,12 @@ class OrderOut(BaseModel):
 
 async def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
     expected_key = settings.api_key
+
+    # In development/test environments the API can be used without configuring an
+    # API_KEY. When a key is set (staging/production), the header is required.
     if not expected_key:
-        logger.warning("Protected endpoint called without API_KEY configured")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key authentication is not configured",
-        )
+        logger.debug("API_KEY not configured; skipping authentication")
+        return
 
     if x_api_key != expected_key:
         raise HTTPException(
