@@ -5,6 +5,9 @@ from app.config import settings
 from app.exchange import Fill
 
 
+DEFAULT_TIMEOUT = 10
+
+
 class ICEPowerExchange:
     def __init__(self) -> None:
         self.base_url = settings.ice_api_url
@@ -34,7 +37,8 @@ class ICEPowerExchange:
 
     def quote(self) -> float:
         resp = self.session.get(
-            f"{self.base_url}/marketdata/{self.symbol}/price"
+            f"{self.base_url}/marketdata/{self.symbol}/price",
+            timeout=DEFAULT_TIMEOUT,
         )
         resp.raise_for_status()
         return float(resp.json()["last_price"])
@@ -48,7 +52,9 @@ class ICEPowerExchange:
             "price":    max_price,
             "type":     "LIMIT",
         }
-        resp = self.session.post(f"{self.base_url}/orders", json=payload)
+        resp = self.session.post(
+            f"{self.base_url}/orders", json=payload, timeout=DEFAULT_TIMEOUT
+        )
         resp.raise_for_status()
         order = resp.json()
         order_id = order["id"]
@@ -83,7 +89,9 @@ class ICEPowerExchange:
             "quantity": qty_mwh,
             "type":     "MARKET",
         }
-        resp = self.session.post(f"{self.base_url}/orders", json=payload)
+        resp = self.session.post(
+            f"{self.base_url}/orders", json=payload, timeout=DEFAULT_TIMEOUT
+        )
         resp.raise_for_status()
         order = resp.json()
         order_id = order["id"]
@@ -107,9 +115,13 @@ class ICEPowerExchange:
         return Fill(qty_mwh=filled, price=avg_price, order_id=order_id)
 
     def _fetch_order(self, order_id: str) -> dict:
-        resp = self.session.get(f"{self.base_url}/orders/{order_id}")
+        resp = self.session.get(
+            f"{self.base_url}/orders/{order_id}", timeout=DEFAULT_TIMEOUT
+        )
         resp.raise_for_status()
         return resp.json()
 
     def cancel_order(self, order_id: str) -> None:
-        self.session.delete(f"{self.base_url}/orders/{order_id}")
+        self.session.delete(
+            f"{self.base_url}/orders/{order_id}", timeout=DEFAULT_TIMEOUT
+        )
