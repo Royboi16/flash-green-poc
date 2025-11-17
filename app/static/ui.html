@@ -251,6 +251,46 @@
               <option value="aws">aws</option>
             </select>
           </div>
+          <div>
+            <label class="stack" for="useDepthSim"><input id="useDepthSim" type="checkbox" />USE_DEPTH_SIM</label>
+            <p class="muted hint">Enable orderbook micro-simulation.</p>
+          </div>
+          <div>
+            <label for="execLatencyMs">EXEC_LATENCY_MS</label>
+            <input id="execLatencyMs" type="number" min="0" step="1" placeholder="100" />
+          </div>
+          <div>
+            <label for="slippageBp">SLIPPAGE_BP</label>
+            <input id="slippageBp" type="number" min="0" step="0.1" placeholder="5" />
+          </div>
+          <div>
+            <label for="bookLevels">BOOK_LEVELS</label>
+            <input id="bookLevels" type="number" min="1" step="1" placeholder="5" />
+          </div>
+          <div>
+            <label for="bookSizeMwh">BOOK_SIZE_MWH</label>
+            <input id="bookSizeMwh" type="number" min="0" step="0.1" placeholder="100" />
+          </div>
+          <div>
+            <label class="stack" for="tradingEnabled"><input id="tradingEnabled" type="checkbox" />TRADING_ENABLED</label>
+            <p class="muted hint">Master switch for trading flows.</p>
+          </div>
+          <div>
+            <label for="spreadMin">SPREAD_MIN</label>
+            <input id="spreadMin" type="number" step="0.1" placeholder="50" />
+          </div>
+          <div>
+            <label for="negThreshold">NEG_THRESHOLD</label>
+            <input id="negThreshold" type="number" step="0.1" placeholder="0" />
+          </div>
+          <div>
+            <label for="maxNotionalPerTrade">MAX_NOTIONAL_PER_TRADE</label>
+            <input id="maxNotionalPerTrade" type="number" min="0" step="0.01" placeholder="10000" />
+          </div>
+          <div>
+            <label for="maxDailyLossGbp">MAX_DAILY_LOSS_GBP</label>
+            <input id="maxDailyLossGbp" type="number" min="0" step="0.01" placeholder="500" />
+          </div>
         </div>
         <div class="actions" style="margin-top: 0.75rem;">
           <button id="applyEnvToServices">Copy env vars to Services tab</button>
@@ -346,6 +386,8 @@ USE_LIVE_FEED=false"></textarea>
         { id: 'useLiveFeed', key: 'USE_LIVE_FEED', type: 'bool' },
         { id: 'useIceLive', key: 'USE_ICE_LIVE', type: 'bool' },
         { id: 'useWeb3Loan', key: 'USE_WEB3_LOAN', type: 'bool' },
+        { id: 'useDepthSim', key: 'USE_DEPTH_SIM', type: 'bool' },
+        { id: 'tradingEnabled', key: 'TRADING_ENABLED', type: 'bool' },
         { id: 'apiPort', key: 'API_PORT' },
         { id: 'metricsPort', key: 'METRICS_PORT' },
         { id: 'liveExchange', key: 'LIVE_EXCHANGE' },
@@ -353,6 +395,14 @@ USE_LIVE_FEED=false"></textarea>
         { id: 'iceSymbol', key: 'ICE_SYMBOL' },
         { id: 'hardhatRpc', key: 'HARDHAT_RPC' },
         { id: 'secretsBackend', key: 'SECRETS_BACKEND' },
+        { id: 'execLatencyMs', key: 'EXEC_LATENCY_MS' },
+        { id: 'slippageBp', key: 'SLIPPAGE_BP' },
+        { id: 'bookLevels', key: 'BOOK_LEVELS' },
+        { id: 'bookSizeMwh', key: 'BOOK_SIZE_MWH' },
+        { id: 'spreadMin', key: 'SPREAD_MIN' },
+        { id: 'negThreshold', key: 'NEG_THRESHOLD' },
+        { id: 'maxNotionalPerTrade', key: 'MAX_NOTIONAL_PER_TRADE' },
+        { id: 'maxDailyLossGbp', key: 'MAX_DAILY_LOSS_GBP' },
       ];
       tabs.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -554,7 +604,11 @@ USE_LIVE_FEED=false"></textarea>
 
       document.getElementById('refreshStatus').addEventListener('click', refreshServiceStatus);
       document.getElementById('startService').addEventListener('click', async () => {
-        const env = textToEnvMap(document.getElementById('envOverrides').value);
+        const prefs = getPrefs();
+        const env = {
+          ...envFromPrefs(prefs),
+          ...textToEnvMap(document.getElementById('envOverrides').value),
+        };
         const cmdText = document.getElementById('customCommand').value.trim();
         const payload = { env };
         if (cmdText) payload.command = cmdText.split(' ');
