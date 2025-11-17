@@ -4,6 +4,7 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
+import sqlite3
 from datetime import date, datetime
 from time import sleep
 
@@ -12,6 +13,7 @@ from app.logger import logger
 from app.metrics import METRICS
 from app.storage import (
     Order,
+    get_connection,
     get_open_orders,
     save_order,
     save_trade,
@@ -61,8 +63,10 @@ _current_day: date = _today()
 _daily_loss: float = 0.0
 
 
-def _settle_open_orders(power_exchange: PowerExchange) -> None:
-    for order in get_open_orders():
+def _settle_open_orders(
+    power_exchange: PowerExchange, conn: sqlite3.Connection
+) -> None:
+    for order in get_open_orders(conn=conn):
         data = power_exchange._fetch_order(order.id)
         status = data["status"]
         filled = float(data.get("filled_qty", 0))
@@ -74,7 +78,7 @@ def _settle_open_orders(power_exchange: PowerExchange) -> None:
             filled,
             avg_price,
         )
-        update_order(order.id, filled, avg_price, status)
+        update_order(order.id, filled, avg_price, status, conn=conn)
 
 
 def run_cycle() -> bool:
@@ -94,10 +98,11 @@ def run_cycle() -> bool:
         METRICS.daily_loss.set(_daily_loss)
 
     if settings.use_ice_live:
-        _settle_open_orders(POWER)
-        if get_open_orders():
-            logger.info("Open orders pending, skipping this tick")
-            return False
+        with get_connection() as conn:
+            _settle_open_orders(POWER, conn)
+            if get_open_orders(conn=conn):
+                logger.info("Open orders pending, skipping this tick")
+                return False
 
     if not settings.trading_enabled:
         METRICS.trades_blocked.inc()
@@ -162,18 +167,20 @@ def run_cycle() -> bool:
             except RuntimeError:
                 return False
 
-            save_order(
-                Order(
-                    id=fill_a.order_id,
-                    timestamp=datetime.utcnow(),
-                    symbol=settings.ice_symbol,
-                    side="BUY",
-                    qty_requested=qty,
-                    qty_filled=fill_a.qty_mwh,
-                    avg_price=fill_a.price,
-                    status="PENDING",
+            with get_connection() as conn:
+                save_order(
+                    Order(
+                        id=fill_a.order_id,
+                        timestamp=datetime.utcnow(),
+                        symbol=settings.ice_symbol,
+                        side="BUY",
+                        qty_requested=qty,
+                        qty_filled=fill_a.qty_mwh,
+                        avg_price=fill_a.price,
+                        status="PENDING",
+                    ),
+                    conn=conn,
                 )
-            )
 
             wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
@@ -190,12 +197,14 @@ def run_cycle() -> bool:
                 _daily_loss += -profit
                 METRICS.daily_loss.set(_daily_loss)
 
-            save_trade(
-                qty_mwh=qty,
-                spot_price=spot,
-                fut_price=fut,
-                profit=profit,
-            )
+            with get_connection() as conn:
+                save_trade(
+                    qty_mwh=qty,
+                    spot_price=spot,
+                    fut_price=fut,
+                    profit=profit,
+                    conn=conn,
+                )
 
             return True
 
