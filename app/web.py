@@ -11,8 +11,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.config import settings
 from app.logger import logger
-from app.metrics import METRICS
-from app.storage import connection_dependency, get_open_orders, get_trades
+from app.storage import connection_dependency, get_open_orders, get_pnl_totals, get_trades
 
 api = FastAPI(
     title="Flash-Green PoC",
@@ -83,11 +82,9 @@ async def prom():
 
 
 @api.get("/pnl", dependencies=[Depends(require_api_key)])
-async def pnl():
-    return {
-        "profit": METRICS.profit_positive._value.get(),
-        "loss": METRICS.profit_negative._value.get(),
-    }
+async def pnl(conn: sqlite3.Connection = Depends(connection_dependency)):
+    """Return aggregated profit/loss totals: net, positive, and negative."""
+    return get_pnl_totals(conn=conn)
 
 
 # ─── Data endpoints ──────────────────────────────────────────────────────────
