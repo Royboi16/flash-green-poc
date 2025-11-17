@@ -42,3 +42,25 @@ def test_save_and_load(monkeypatch):
     trades = storage.get_trades()
     assert len(trades) == 1
     assert trades[0]["profit"] == 100.0
+
+
+def test_get_trades_orders_by_recency(monkeypatch):
+    conn = _temp_conn()
+    monkeypatch.setattr(storage, "_conn", conn)
+    with conn:
+        conn.executemany(
+            """
+            INSERT INTO trades (qty_mwh, spot_price, fut_price, profit, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (1.0, 10.0, 20.0, 5.0, "2024-01-01T00:00:00"),
+                (1.1, 11.0, 21.0, 6.0, "2024-01-02T00:00:00"),
+                (1.2, 12.0, 22.0, 7.0, "2024-01-02T00:00:00"),
+            ],
+        )
+
+    trades = storage.get_trades(limit=2)
+
+    assert [t["id"] for t in trades] == [3, 2]
+    assert trades[0]["timestamp"] == "2024-01-02T00:00:00"

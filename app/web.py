@@ -76,7 +76,7 @@ async def trades(limit: int = 100):
     """
     Retrieve up to `limit` most recent trades.
     """
-    return get_trades()[:limit]
+    return get_trades(limit=limit)
 
 
 @api.get("/orders/open", response_model=List[OrderOut])
