@@ -103,6 +103,15 @@ def run_cycle() -> bool:
         METRICS.trades_blocked.inc()
         return False
 
+    if _daily_loss >= settings.max_daily_loss_gbp:
+        METRICS.trades_blocked.inc()
+        logger.warning(
+            "Daily loss cap reached (£%.2f/£%.2f); skipping trades",
+            _daily_loss,
+            settings.max_daily_loss_gbp,
+        )
+        return False
+
     POWER.advance()
     ice.advance()
 
