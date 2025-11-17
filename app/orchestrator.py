@@ -29,16 +29,16 @@ else:
 
 # instantiate power exchange
 if settings.use_ice_live:
-    pl = PowerExchange()
+    POWER = PowerExchange()
 elif settings.use_depth_sim:
-    pl = PowerExchange(
+    POWER = PowerExchange(
         settings.exec_latency_ms,
         settings.slippage_bp,
         settings.book_levels,
         settings.book_size_mwh,
     )
 else:
-    pl = PowerExchange()
+    POWER = PowerExchange()
 
 # futures always CSV for now
 from app.exchange import IceCsvExchange
@@ -94,7 +94,7 @@ def run_cycle() -> bool:
         METRICS.daily_loss.set(_daily_loss)
 
     if settings.use_ice_live:
-        _settle_open_orders(pl)
+        _settle_open_orders(POWER)
         if get_open_orders():
             logger.info("Open orders pending, skipping this tick")
             return False
@@ -103,10 +103,10 @@ def run_cycle() -> bool:
         METRICS.trades_blocked.inc()
         return False
 
-    pl.advance()
+    POWER.advance()
     ice.advance()
 
-    spot = pl.quote()
+    spot = POWER.quote()
     fut = ice.quote()
     logger.debug("TICK:   spot=%r, fut=%r, spread=%r", spot, fut, fut - spot)
 
@@ -149,7 +149,7 @@ def run_cycle() -> bool:
     with FlashLoanAdapter(limit_gbp=100_000) as wallet:
         try:
             try:
-                fill_a = pl.buy(qty, max_price=spot)
+                fill_a = POWER.buy(qty, max_price=spot)
             except RuntimeError:
                 return False
 
