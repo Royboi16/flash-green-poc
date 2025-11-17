@@ -177,12 +177,17 @@ def run_cycle() -> bool:
         )
         record_loan_repayment(
             asset=settings.loan_principal_asset,
-            amount=repayment_total,
+            amount=loan_amount,
             fee_bps=settings.loan_fee_bps,
             reference=reference,
             tx_hash=meta["transactionHash"],
             chain_id=loan.chain_id,
-            metadata={"event": decoded_event, **meta},
+            metadata={
+                "event": decoded_event,
+                "fee_paid": fee_gbp,
+                "repayment_total": repayment_total,
+                **meta,
+            },
         )
         return True
 
@@ -251,10 +256,15 @@ def run_cycle() -> bool:
 
                 record_loan_repayment(
                     asset=settings.loan_principal_asset,
-                    amount=repayment_total,
+                    amount=loan_amount,
                     fee_bps=settings.loan_fee_bps,
                     reference=reference,
-                    metadata={"mode": "sim", "profit": profit},
+                    metadata={
+                        "mode": "sim",
+                        "profit": profit,
+                        "fee_paid": fee_gbp,
+                        "repayment_total": repayment_total,
+                    },
                 )
 
                 save_trade(
