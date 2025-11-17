@@ -4,22 +4,22 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
-from datetime import datetime, date
+from datetime import date, datetime
 from time import sleep
 
+from app.config import settings
 from app.logger import logger
 from app.metrics import METRICS
-from app.strategy import should_trade
 from app.storage import (
-    save_trade,
+    Order,
     get_open_orders,
     save_order,
+    save_trade,
     update_order,
-    Order,
 )
-from app.config import settings
+from app.strategy import should_trade
 
-# ─── choose PowerExchange implementation ───────────────────────────────────
+# --- choose PowerExchange implementation ------------------------------------
 if settings.use_ice_live:
     from app.exchange_ice import ICEPowerExchange as PowerExchange
 elif settings.use_depth_sim:
@@ -27,7 +27,7 @@ elif settings.use_depth_sim:
 else:
     from app.exchange import PowerCsvExchange as PowerExchange
 
-# instantiate pl
+# instantiate power exchange
 if settings.use_ice_live:
     pl = PowerExchange()
 elif settings.use_depth_sim:
@@ -42,6 +42,7 @@ else:
 
 # futures always CSV for now
 from app.exchange import IceCsvExchange
+
 ice = IceCsvExchange()
 
 # flash-loan adapter (unchanged)
@@ -50,108 +51,110 @@ if settings.use_web3_loan:
 else:
     from app.loan import flash_loan as FlashLoanAdapter
 
-# ── Allow test-friendly override of “today” ────────────────────────────────
+
 def _today() -> date:
     return date.today()
 
+
 # Globals to track daily PnL
 _current_day: date = _today()
-_daily_loss:   float = 0.0
+_daily_loss: float = 0.0
 
-def _settle_open_orders(pl):
-    for o in get_open_orders():
-        data = pl._fetch_order(o.id)
-        stat = data["status"]
+
+def _settle_open_orders(power_exchange: PowerExchange) -> None:
+    for order in get_open_orders():
+        data = power_exchange._fetch_order(order.id)
+        status = data["status"]
         filled = float(data.get("filled_qty", 0))
-        avg_p = float(data.get("avg_price", 0))
-        # ←── ADD YOUR DEBUG LOG HERE ─────────────────────────────
-        # ── DEBUG: show what we're settling ────────────────────────────────
-        logger.debug(f"Settling order {o.id}: status={stat}, filled={filled}, avg_price={avg_p}")
-        update_order(o.id, filled, avg_p, stat)
+        avg_price = float(data.get("avg_price", 0))
+        logger.debug(
+            "Settling order %s: status=%s, filled=%s, avg_price=%s",
+            order.id,
+            status,
+            filled,
+            avg_price,
+        )
+        update_order(order.id, filled, avg_price, status)
+
 
 def run_cycle() -> bool:
     global _current_day, _daily_loss
-    
-    # ——— DEBUG: show current configuration —————————————————————————
+
     logger.debug(
-        f"CONFIG: neg_threshold={settings.neg_threshold!r}, "
-        f"spread_min={settings.spread_min!r}, "
-        f"max_notional_per_trade={settings.max_notional_per_trade!r}"
+        "CONFIG: neg_threshold=%r, spread_min=%r, max_notional_per_trade=%r",
+        settings.neg_threshold,
+        settings.spread_min,
+        settings.max_notional_per_trade,
     )
 
-    # reset daily loss at UTC midnight
     today = _today()
     if today != _current_day:
         _current_day = today
-        _daily_loss   = 0.0
+        _daily_loss = 0.0
         METRICS.daily_loss.set(_daily_loss)
 
-    # if using live ICE, reconcile any in-flight orders first
     if settings.use_ice_live:
         _settle_open_orders(pl)
-        # if any still open, wait
         if get_open_orders():
             logger.info("Open orders pending, skipping this tick")
             return False
 
-    # master switch
     if not settings.trading_enabled:
         METRICS.trades_blocked.inc()
         return False
 
-    # advance both feeds each tick
-    now = datetime.utcnow()
     pl.advance()
     ice.advance()
 
     spot = pl.quote()
-    fut  = ice.quote()
-    logger.debug(f"TICK:   spot={spot!r}, fut={fut!r}, spread={fut-spot!r}")
+    fut = ice.quote()
+    logger.debug("TICK:   spot=%r, fut=%r, spread=%r", spot, fut, fut - spot)
 
     trade, qty, spread = should_trade(spot, fut)
     METRICS.spread.set(spread)
-    logger.debug(f" SIGNAL: trade={trade!r}, qty={qty!r}, spread={spread!r}")
-    
-    logger.debug(f"DEBUG tick: spot={spot}, fut={fut}, spread={spread}, trade={trade}, qty={qty}")
-    
+    logger.debug(" SIGNAL: trade=%r, qty=%r, spread=%r", trade, qty, spread)
+
+    logger.debug(
+        "DEBUG tick: spot=%s, fut=%s, spread=%s, trade=%s, qty=%s",
+        spot,
+        fut,
+        spread,
+        trade,
+        qty,
+    )
+
     if not trade:
         return False
 
-    # notional check (qty×spot gives £ exposure)
     notional = qty * spot
     if notional > settings.max_notional_per_trade:
         logger.warning(
-            f"Notional £{notional:.2f} > cap £{settings.max_notional_per_trade}"
+            "Notional £%.2f > cap £%s", notional, settings.max_notional_per_trade
         )
         METRICS.trades_blocked.inc()
         return False
 
-    # ── On‐chain flash‐loan branch ─────────────────────────────────────────────
     if settings.use_web3_loan:
         loan = FlashLoanAdapter(
             lender_address=settings.flash_loan_contract,
             private_key=settings.lender_private_key,
             rpc_url=str(settings.hardhat_rpc),
         )
-        receipt = loan.flash_loan(
+        loan.flash_loan(
             receiver_address=settings.receiver_address,
             amount_wei=100_000 * 10**18,
         )
         return True
 
-    # ── Mock flash‐loan branch ─────────────────────────────────────────────────
-    else:
-        with FlashLoanAdapter(limit_gbp=100_000) as wallet:
+    with FlashLoanAdapter(limit_gbp=100_000) as wallet:
+        try:
             try:
-                # Leg A – buy power at current spot price cap
-                try:
-                    fill_a = pl.buy(qty, max_price=spot)
-                except RuntimeError:
-                    # If we still slip, skip this tick
-                    return False
+                fill_a = pl.buy(qty, max_price=spot)
+            except RuntimeError:
+                return False
 
-                # ── Record the ICE buy order for idempotency ────────────────────
-                save_order(Order(
+            save_order(
+                Order(
                     id=fill_a.order_id,
                     timestamp=datetime.utcnow(),
                     symbol=settings.ice_symbol,
@@ -160,60 +163,51 @@ def run_cycle() -> bool:
                     qty_filled=fill_a.qty_mwh,
                     avg_price=fill_a.price,
                     status="PENDING",
-                ))
-
-                # Leg A funds returned
-                wallet["gbp"] += fill_a.qty_mwh * fill_a.price
-
-                # Leg B – short Baseload future
-                fill_b = ice.sell(qty)
-                wallet["gbp"] += fill_b.qty_mwh * fill_b.price
-
-                # Record PnL
-                profit = wallet["gbp"] - 100_000
-                if profit >= 0:
-                    METRICS.profit_positive.inc(profit)
-                else:
-                    METRICS.profit_negative.inc(-profit)
-
-                # track daily loss
-                if profit < 0:
-                    _daily_loss += -profit
-                    METRICS.daily_loss.set(_daily_loss)
-
-                save_trade(
-                    qty_mwh=qty,
-                    spot_price=spot,
-                    fut_price=fut,
-                    profit=profit,
                 )
+            )
 
-                return True
+            wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
-            finally:
-                # ALWAYS repay principal before context exits
-                wallet["gbp"] = 0
+            fill_b = ice.sell(qty)
+            wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
-# ---------------------------------------------------------------------------
-# Simple CLI loop
-# ---------------------------------------------------------------------------
+            profit = wallet["gbp"] - 100_000
+            if profit >= 0:
+                METRICS.profit_positive.inc(profit)
+            else:
+                METRICS.profit_negative.inc(-profit)
+
+            if profit < 0:
+                _daily_loss += -profit
+                METRICS.daily_loss.set(_daily_loss)
+
+            save_trade(
+                qty_mwh=qty,
+                spot_price=spot,
+                fut_price=fut,
+                profit=profit,
+            )
+
+            return True
+
+        finally:
+            wallet["gbp"] = 0
+
+
 if __name__ == "__main__":
-    from prometheus_client import start_http_server
-    from app.config        import settings
-    from app.logger        import logger
-    import uvicorn
     from threading import Thread
 
-    # start Prometheus exporter
+    import uvicorn
+    from prometheus_client import start_http_server
+
     try:
         start_http_server(settings.metrics_port)
-        logger.info(f"Prometheus metrics listening on {settings.metrics_port}")
+        logger.info("Prometheus metrics listening on %s", settings.metrics_port)
     except OSError:
         logger.warning(
-            f"Could not bind metrics port {settings.metrics_port}; skipping"
+            "Could not bind metrics port %s; skipping", settings.metrics_port
         )
 
-    # helper to start FastAPI in a thread
     def _start_api():
         try:
             uvicorn.run(
@@ -222,14 +216,12 @@ if __name__ == "__main__":
                 port=settings.api_port,
                 log_level="warning",
             )
-        except OSError as e:
-            logger.warning(f"Could not bind API port {settings.api_port}: {e}")
+        except OSError as exc:
+            logger.warning("Could not bind API port %s: %s", settings.api_port, exc)
 
-    # launch FastAPI
     Thread(target=_start_api, daemon=True).start()
-    logger.info(f"FastAPI health & Prom JSON on port {settings.api_port}")
+    logger.info("FastAPI health & Prom JSON on port %s", settings.api_port)
 
-    # main loop
     logger.info("Starting flash-green PoC loop …")
     while True:
         if run_cycle():
