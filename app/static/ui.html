@@ -28,6 +28,9 @@
         margin: 0;
         font-size: 1.5rem;
       }
+      h3 {
+        margin: 1rem 0 0.35rem;
+      }
       p.lead {
         margin: 0.35rem 0 0;
         color: #cbd5e1;
@@ -85,6 +88,10 @@
         border: 1px solid var(--border);
         background: #0b1224;
         color: var(--text);
+      }
+      input[type="checkbox"] {
+        width: auto;
+        margin-right: 0.5rem;
       }
       textarea {
         min-height: 120px;
@@ -153,6 +160,15 @@
         display: grid;
         gap: 0.35rem;
       }
+      .stack {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .hint {
+        margin: 0.25rem 0 0;
+      }
     </style>
   </head>
   <body>
@@ -168,14 +184,17 @@
         <button class="tab-button" data-tab="data">4) Trades &amp; PnL</button>
       </div>
       <div id="config" class="panel active">
+        <h3>API access</h3>
         <div class="grid two-col">
           <div>
             <label for="apiBase">API base URL</label>
             <input id="apiBase" type="text" placeholder="e.g. http://localhost:8000" />
+            <p class="muted hint">Used for all requests below.</p>
           </div>
           <div>
             <label for="apiKey">X-API-Key (optional)</label>
             <input id="apiKey" type="text" placeholder="sent with protected endpoints" />
+            <p class="muted hint">Left blank for local/dev setups.</p>
           </div>
         </div>
         <div class="actions" style="margin-top: 0.75rem;">
@@ -184,6 +203,59 @@
           <button class="secondary" id="loadState">Fetch server state</button>
         </div>
         <pre id="configState" class="muted" style="margin-top: 0.75rem;">State: waiting...</pre>
+
+        <h3>Environment variables</h3>
+        <p class="muted">Common runtime toggles stored locally. Push them into the Services tab before starting the orchestrator.</p>
+        <div class="grid two-col">
+          <div>
+            <label class="stack" for="useLiveFeed"><input id="useLiveFeed" type="checkbox" />USE_LIVE_FEED</label>
+            <p class="muted hint">Pull quotes from CCXT instead of CSV.</p>
+          </div>
+          <div>
+            <label class="stack" for="useIceLive"><input id="useIceLive" type="checkbox" />USE_ICE_LIVE</label>
+            <p class="muted hint">Enable real ICE trading instead of the CSV sim.</p>
+          </div>
+          <div>
+            <label class="stack" for="useWeb3Loan"><input id="useWeb3Loan" type="checkbox" />USE_WEB3_LOAN</label>
+            <p class="muted hint">Use the Hardhat/Web3 flash-loan path.</p>
+          </div>
+          <div>
+            <label for="apiPort">API_PORT</label>
+            <input id="apiPort" type="number" min="1" max="65535" placeholder="8002" />
+          </div>
+          <div>
+            <label for="metricsPort">METRICS_PORT</label>
+            <input id="metricsPort" type="number" min="1" max="65535" placeholder="8000" />
+          </div>
+          <div>
+            <label for="liveExchange">LIVE_EXCHANGE</label>
+            <input id="liveExchange" type="text" placeholder="binance" />
+          </div>
+          <div>
+            <label for="liveSymbol">LIVE_SYMBOL</label>
+            <input id="liveSymbol" type="text" placeholder="BTC/USDT" />
+          </div>
+          <div>
+            <label for="iceSymbol">ICE_SYMBOL</label>
+            <input id="iceSymbol" type="text" placeholder="UK_BASELOAD_Q2_2025" />
+          </div>
+          <div>
+            <label for="hardhatRpc">HARDHAT_RPC</label>
+            <input id="hardhatRpc" type="text" placeholder="http://127.0.0.1:8545" />
+          </div>
+          <div>
+            <label for="secretsBackend">SECRETS_BACKEND</label>
+            <select id="secretsBackend">
+              <option value="">(none)</option>
+              <option value="vault">vault</option>
+              <option value="aws">aws</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions" style="margin-top: 0.75rem;">
+          <button id="applyEnvToServices">Copy env vars to Services tab</button>
+          <button class="secondary" id="clearEnv">Clear env fields</button>
+        </div>
       </div>
 
       <div id="services" class="panel">
@@ -196,17 +268,23 @@
             <p class="muted">Start/stop runs the orchestrator with `python -m app.orchestrator` unless a custom command is provided.</p>
             <label for="customCommand">Custom command (optional)</label>
             <input id="customCommand" type="text" placeholder="python -m app.orchestrator" />
+            <div class="list" style="margin-top: 0.5rem;">
+              <span class="muted">Launch command</span>
+              <pre id="launchCommand" class="muted">python -m app.orchestrator</pre>
+            </div>
           </div>
           <div>
             <label for="envOverrides">Env overrides (KEY=VALUE per line)</label>
             <textarea id="envOverrides" placeholder="API_KEY=localtest
 USE_LIVE_FEED=false"></textarea>
+            <p class="muted hint">Use the copy buttons to pull saved env vars from the Config tab.</p>
           </div>
         </div>
         <div class="actions" style="margin-top: 0.75rem;">
           <button id="startService">Start orchestrator</button>
           <button class="secondary" id="stopService">Stop orchestrator</button>
           <button class="secondary" id="refreshStatus">Refresh status</button>
+          <button class="secondary" id="loadEnvOverrides">Load saved env vars</button>
         </div>
         <pre id="serviceOutput" class="muted" style="margin-top: 0.75rem;">Status: waiting...</pre>
       </div>
@@ -264,6 +342,18 @@ USE_LIVE_FEED=false"></textarea>
     <script>
       const tabs = document.querySelectorAll('.tab-button');
       const panels = document.querySelectorAll('.panel');
+      const envFields = [
+        { id: 'useLiveFeed', key: 'USE_LIVE_FEED', type: 'bool' },
+        { id: 'useIceLive', key: 'USE_ICE_LIVE', type: 'bool' },
+        { id: 'useWeb3Loan', key: 'USE_WEB3_LOAN', type: 'bool' },
+        { id: 'apiPort', key: 'API_PORT' },
+        { id: 'metricsPort', key: 'METRICS_PORT' },
+        { id: 'liveExchange', key: 'LIVE_EXCHANGE' },
+        { id: 'liveSymbol', key: 'LIVE_SYMBOL' },
+        { id: 'iceSymbol', key: 'ICE_SYMBOL' },
+        { id: 'hardhatRpc', key: 'HARDHAT_RPC' },
+        { id: 'secretsBackend', key: 'SECRETS_BACKEND' },
+      ];
       tabs.forEach(btn => {
         btn.addEventListener('click', () => {
           tabs.forEach(b => b.classList.remove('active'));
@@ -274,9 +364,20 @@ USE_LIVE_FEED=false"></textarea>
       });
 
       function getPrefs() {
+        const env = {};
+        envFields.forEach(({ id, key, type }) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          if (type === 'bool') {
+            env[key] = el.checked;
+          } else {
+            env[key] = el.value.trim();
+          }
+        });
         return {
           apiBase: document.getElementById('apiBase').value.trim() || '',
           apiKey: document.getElementById('apiKey').value.trim(),
+          env,
         };
       }
 
@@ -292,8 +393,60 @@ USE_LIVE_FEED=false"></textarea>
           const prefs = JSON.parse(raw);
           if (prefs.apiBase !== undefined) document.getElementById('apiBase').value = prefs.apiBase;
           if (prefs.apiKey !== undefined) document.getElementById('apiKey').value = prefs.apiKey;
+          if (prefs.env) {
+            envFields.forEach(({ id, key, type }) => {
+              const el = document.getElementById(id);
+              if (!el) return;
+              if (!(key in prefs.env)) return;
+              if (type === 'bool') {
+                el.checked = !!prefs.env[key];
+              } else {
+                el.value = prefs.env[key] ?? '';
+              }
+            });
+          }
         } catch (err) {
           console.error('Failed to read prefs', err);
+        }
+      }
+
+      function clearEnvFields() {
+        envFields.forEach(({ id, type }) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          if (type === 'bool') {
+            el.checked = false;
+          } else {
+            el.value = '';
+          }
+        });
+      }
+
+      function envFromPrefs(prefs) {
+        const env = {};
+        envFields.forEach(({ key, type }) => {
+          if (!prefs.env) return;
+          const raw = prefs.env[key];
+          if (raw === undefined || raw === null || raw === '') return;
+          if (type === 'bool') {
+            env[key] = raw ? '1' : '0';
+          } else {
+            env[key] = String(raw);
+          }
+        });
+        return env;
+      }
+
+      function loadStoredEnvOverrides() {
+        const raw = localStorage.getItem('flashgreen-ui');
+        if (!raw) return;
+        try {
+          const prefs = JSON.parse(raw);
+          const env = envFromPrefs(prefs);
+          if (Object.keys(env).length === 0) return;
+          writeEnvOverrides(env);
+        } catch (err) {
+          console.error('Failed to load stored env overrides', err);
         }
       }
 
@@ -340,6 +493,24 @@ USE_LIVE_FEED=false"></textarea>
         }
       }
 
+      function updateLaunchCommand(status) {
+        const pre = document.getElementById('launchCommand');
+        if (!pre) return;
+        const cmd = status && status.command;
+        if (Array.isArray(cmd)) {
+          pre.textContent = cmd.join(' ');
+        } else if (cmd) {
+          pre.textContent = String(cmd);
+        } else {
+          pre.textContent = 'python -m app.orchestrator';
+        }
+      }
+
+      function writeEnvOverrides(env) {
+        const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+        document.getElementById('envOverrides').value = lines.join('\n');
+      }
+
       function render(obj) {
         return typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
       }
@@ -348,12 +519,14 @@ USE_LIVE_FEED=false"></textarea>
         const result = await apiRequest('/ui/state');
         document.getElementById('configState').textContent = render(result.body);
         updateStatus(result.body.orchestrator);
+        updateLaunchCommand(result.body.orchestrator);
       }
 
       async function refreshServiceStatus() {
         const result = await apiRequest('/ui/services/status');
         document.getElementById('serviceOutput').textContent = render(result.body);
         updateStatus(result.body);
+        updateLaunchCommand(result.body);
       }
 
       document.getElementById('savePrefs').addEventListener('click', () => {
@@ -365,6 +538,19 @@ USE_LIVE_FEED=false"></textarea>
         alert('Loaded stored preferences (if any)');
       });
       document.getElementById('loadState').addEventListener('click', refreshState);
+
+      document.getElementById('applyEnvToServices').addEventListener('click', () => {
+        const prefs = getPrefs();
+        const env = envFromPrefs(prefs);
+        writeEnvOverrides(env);
+        savePrefs();
+      });
+
+      document.getElementById('loadEnvOverrides').addEventListener('click', () => {
+        loadStoredEnvOverrides();
+      });
+
+      document.getElementById('clearEnv').addEventListener('click', clearEnvFields);
 
       document.getElementById('refreshStatus').addEventListener('click', refreshServiceStatus);
       document.getElementById('startService').addEventListener('click', async () => {
@@ -379,11 +565,13 @@ USE_LIVE_FEED=false"></textarea>
         });
         document.getElementById('serviceOutput').textContent = render(result.body);
         updateStatus(result.body);
+        updateLaunchCommand(result.body);
       });
       document.getElementById('stopService').addEventListener('click', async () => {
         const result = await apiRequest('/ui/services/stop', { method: 'POST' });
         document.getElementById('serviceOutput').textContent = render(result.body);
         updateStatus(result.body);
+        updateLaunchCommand(result.body);
       });
 
       document.getElementById('runTests').addEventListener('click', async () => {
@@ -429,6 +617,7 @@ USE_LIVE_FEED=false"></textarea>
 
       // Defaults
       loadPrefs();
+      loadStoredEnvOverrides();
       if (!document.getElementById('apiBase').value) {
         document.getElementById('apiBase').value = window.location.origin;
       }
