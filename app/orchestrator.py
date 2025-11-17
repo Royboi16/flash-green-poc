@@ -106,7 +106,7 @@ def _persist_buy_order(fill_a, qty: float) -> str:
 def _record_trade(fill_a, fill_b, qty: float, spot: float, fut: float) -> float:
     global _daily_loss
 
-    profit = fill_a.qty_mwh * fill_a.price + fill_b.qty_mwh * fill_b.price - LOAN_LIMIT_GBP
+    profit = fill_a.qty_mwh * fill_a.price + fill_b.qty_mwh * fill_b.price
 
     if profit >= 0:
         METRICS.profit_positive.inc(profit)
