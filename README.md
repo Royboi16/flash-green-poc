@@ -21,6 +21,24 @@ API endpoints that expose metrics or trading data require a shared secret in the
 `X-API-Key` header. Set `API_KEY` in your `.env` (or secret manager) and pass it
 with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`.
 
+## Local API + UI
+
+Run the FastAPI server with uvicorn and open the bundled control panel at `/ui`:
+
+```bash
+poetry install
+poetry run uvicorn app.web:api --host 0.0.0.0 --port 8000
+```
+
+Then browse to `http://localhost:8000/ui` to:
+
+- Supply the API base URL and optional `X-API-Key` used for authenticated calls.
+- Start/stop the orchestrator process (`python -m app.orchestrator`) with
+  optional `KEY=VALUE` overrides for the env.
+- Kick off `poetry run pytest` runs and view stdout/stderr inline.
+- Fetch `/healthz`, `/pnl`, `/trades`, `/orders/open`, and `/metrics` data
+  directly from the browser.
+
 ### Environment templates
 
 | File | When to use | Highlights |

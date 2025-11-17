@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Flash Green Control UI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light dark;
+        --accent: #1a8cff;
+        --bg: #0f172a;
+        --card: #111827;
+        --text: #e5e7eb;
+        --border: #334155;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 1.5rem;
+        border-bottom: 1px solid var(--border);
+        background: #0b1224;
+      }
+      h1 {
+        margin: 0;
+        font-size: 1.5rem;
+      }
+      p.lead {
+        margin: 0.35rem 0 0;
+        color: #cbd5e1;
+      }
+      .container {
+        padding: 1rem 1.5rem 2rem;
+        max-width: 1100px;
+      }
+      .tabs {
+        display: flex;
+        gap: 0.25rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .tab-button {
+        border: 1px solid var(--border);
+        border-bottom: none;
+        background: #0d1529;
+        color: var(--text);
+        padding: 0.65rem 1rem;
+        cursor: pointer;
+        font-weight: 600;
+        border-radius: 0.5rem 0.5rem 0 0;
+      }
+      .tab-button.active {
+        background: var(--accent);
+        color: #0b1224;
+      }
+      .panel {
+        display: none;
+        border: 1px solid var(--border);
+        border-radius: 0 0.5rem 0.5rem 0.5rem;
+        padding: 1rem;
+        background: var(--card);
+      }
+      .panel.active {
+        display: block;
+      }
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+      .two-col {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+      label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-weight: 600;
+      }
+      input, textarea, button, select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.65rem;
+        border-radius: 0.5rem;
+        border: 1px solid var(--border);
+        background: #0b1224;
+        color: var(--text);
+      }
+      textarea {
+        min-height: 120px;
+      }
+      button {
+        cursor: pointer;
+        font-weight: 700;
+        background: var(--accent);
+        color: #0b1224;
+        border: none;
+        transition: transform 120ms ease, opacity 120ms ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+      }
+      button.secondary {
+        background: #1e293b;
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      pre {
+        background: #0b1224;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        font-size: 0.9rem;
+      }
+      .callout {
+        padding: 0.75rem 1rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: #0b1224;
+        color: #cbd5e1;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 700;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #f59e0b;
+        display: inline-block;
+      }
+      .dot.ok {
+        background: #22c55e;
+      }
+      .dot.err {
+        background: #ef4444;
+      }
+      .muted {
+        color: #94a3b8;
+        font-size: 0.9rem;
+      }
+      .list {
+        display: grid;
+        gap: 0.35rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Flash Green local UI</h1>
+      <p class="lead">Interact with the FastAPI server, orchestrator process, and quick health checks from one page.</p>
+    </header>
+    <div class="container">
+      <div class="tabs">
+        <button class="tab-button active" data-tab="config">1) Config</button>
+        <button class="tab-button" data-tab="services">2) Services</button>
+        <button class="tab-button" data-tab="tests">3) Tests</button>
+        <button class="tab-button" data-tab="data">4) Trades &amp; PnL</button>
+      </div>
+      <div id="config" class="panel active">
+        <div class="grid two-col">
+          <div>
+            <label for="apiBase">API base URL</label>
+            <input id="apiBase" type="text" placeholder="e.g. http://localhost:8000" />
+          </div>
+          <div>
+            <label for="apiKey">X-API-Key (optional)</label>
+            <input id="apiKey" type="text" placeholder="sent with protected endpoints" />
+          </div>
+        </div>
+        <div class="actions" style="margin-top: 0.75rem;">
+          <button id="savePrefs">Save preferences</button>
+          <button class="secondary" id="loadPrefs">Load saved</button>
+          <button class="secondary" id="loadState">Fetch server state</button>
+        </div>
+        <pre id="configState" class="muted" style="margin-top: 0.75rem;">State: waiting...</pre>
+      </div>
+
+      <div id="services" class="panel">
+        <div class="grid two-col">
+          <div>
+            <div class="status">
+              <span id="orchDot" class="dot"></span>
+              <span id="orchStatus">unknown</span>
+            </div>
+            <p class="muted">Start/stop runs the orchestrator with `python -m app.orchestrator` unless a custom command is provided.</p>
+            <label for="customCommand">Custom command (optional)</label>
+            <input id="customCommand" type="text" placeholder="python -m app.orchestrator" />
+          </div>
+          <div>
+            <label for="envOverrides">Env overrides (KEY=VALUE per line)</label>
+            <textarea id="envOverrides" placeholder="API_KEY=localtest
+USE_LIVE_FEED=false"></textarea>
+          </div>
+        </div>
+        <div class="actions" style="margin-top: 0.75rem;">
+          <button id="startService">Start orchestrator</button>
+          <button class="secondary" id="stopService">Stop orchestrator</button>
+          <button class="secondary" id="refreshStatus">Refresh status</button>
+        </div>
+        <pre id="serviceOutput" class="muted" style="margin-top: 0.75rem;">Status: waiting...</pre>
+      </div>
+
+      <div id="tests" class="panel">
+        <div class="grid two-col">
+          <div>
+            <label for="pytestMarkers">Markers / -k expression</label>
+            <input id="pytestMarkers" type="text" placeholder="config or slow" />
+          </div>
+          <div>
+            <label for="pytestArgs">Extra pytest args</label>
+            <input id="pytestArgs" type="text" placeholder="-q or --maxfail=1" />
+          </div>
+        </div>
+        <div class="actions" style="margin-top: 0.75rem;">
+          <button id="runTests">Run tests</button>
+          <button class="secondary" id="loadLastTest">Show last result</button>
+        </div>
+        <div class="grid" style="margin-top: 0.75rem;">
+          <div class="list">
+            <span class="muted">Command</span>
+            <pre id="testCommand" class="muted">not run yet</pre>
+          </div>
+          <div class="list">
+            <span class="muted">Stdout</span>
+            <pre id="testStdout" class="muted">n/a</pre>
+          </div>
+          <div class="list">
+            <span class="muted">Stderr</span>
+            <pre id="testStderr" class="muted">n/a</pre>
+          </div>
+          <div class="list">
+            <span class="muted">Result</span>
+            <pre id="testResult" class="muted">n/a</pre>
+          </div>
+        </div>
+      </div>
+
+      <div id="data" class="panel">
+        <div class="callout">
+          Use the buttons below to fetch live data from the FastAPI endpoints. Results are shown as JSON where possible.
+        </div>
+        <div class="actions" style="margin: 0.75rem 0;">
+          <button data-fetch="/healthz">/healthz</button>
+          <button data-fetch="/pnl">/pnl</button>
+          <button data-fetch="/trades">/trades</button>
+          <button data-fetch="/orders/open">/orders/open</button>
+          <button data-fetch="/metrics">/metrics</button>
+        </div>
+        <pre id="dataOutput" class="muted">No request yet</pre>
+      </div>
+    </div>
+
+    <script>
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.panel');
+      tabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+          tabs.forEach(b => b.classList.remove('active'));
+          panels.forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          document.getElementById(btn.dataset.tab).classList.add('active');
+        });
+      });
+
+      function getPrefs() {
+        return {
+          apiBase: document.getElementById('apiBase').value.trim() || '',
+          apiKey: document.getElementById('apiKey').value.trim(),
+        };
+      }
+
+      function savePrefs() {
+        const prefs = getPrefs();
+        localStorage.setItem('flashgreen-ui', JSON.stringify(prefs));
+      }
+
+      function loadPrefs() {
+        const raw = localStorage.getItem('flashgreen-ui');
+        if (!raw) return;
+        try {
+          const prefs = JSON.parse(raw);
+          if (prefs.apiBase !== undefined) document.getElementById('apiBase').value = prefs.apiBase;
+          if (prefs.apiKey !== undefined) document.getElementById('apiKey').value = prefs.apiKey;
+        } catch (err) {
+          console.error('Failed to read prefs', err);
+        }
+      }
+
+      function textToEnvMap(text) {
+        const env = {};
+        text.split('\n').forEach(line => {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.includes('=')) return;
+          const [key, ...rest] = trimmed.split('=');
+          env[key] = rest.join('=');
+        });
+        return env;
+      }
+
+      async function apiRequest(path, options = {}) {
+        const prefs = getPrefs();
+        const headers = options.headers || {};
+        if (prefs.apiKey) headers['X-API-Key'] = prefs.apiKey;
+        const base = prefs.apiBase || '';
+        const url = base + path;
+        const response = await fetch(url, { ...options, headers });
+        const text = await response.text();
+        let body = text;
+        try {
+          body = JSON.parse(text);
+        } catch (_) {}
+        return { response, body, text };
+      }
+
+      function updateStatus(status) {
+        const dot = document.getElementById('orchDot');
+        const label = document.getElementById('orchStatus');
+        if (!status) {
+          dot.className = 'dot';
+          label.textContent = 'unknown';
+          return;
+        }
+        if (status.running) {
+          dot.className = 'dot ok';
+          label.textContent = `Running (pid ${status.pid || 'n/a'})`;
+        } else {
+          dot.className = 'dot err';
+          label.textContent = 'Stopped';
+        }
+      }
+
+      function render(obj) {
+        return typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+      }
+
+      async function refreshState() {
+        const result = await apiRequest('/ui/state');
+        document.getElementById('configState').textContent = render(result.body);
+        updateStatus(result.body.orchestrator);
+      }
+
+      async function refreshServiceStatus() {
+        const result = await apiRequest('/ui/services/status');
+        document.getElementById('serviceOutput').textContent = render(result.body);
+        updateStatus(result.body);
+      }
+
+      document.getElementById('savePrefs').addEventListener('click', () => {
+        savePrefs();
+        alert('Preferences saved');
+      });
+      document.getElementById('loadPrefs').addEventListener('click', () => {
+        loadPrefs();
+        alert('Loaded stored preferences (if any)');
+      });
+      document.getElementById('loadState').addEventListener('click', refreshState);
+
+      document.getElementById('refreshStatus').addEventListener('click', refreshServiceStatus);
+      document.getElementById('startService').addEventListener('click', async () => {
+        const env = textToEnvMap(document.getElementById('envOverrides').value);
+        const cmdText = document.getElementById('customCommand').value.trim();
+        const payload = { env };
+        if (cmdText) payload.command = cmdText.split(' ');
+        const result = await apiRequest('/ui/services/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        document.getElementById('serviceOutput').textContent = render(result.body);
+        updateStatus(result.body);
+      });
+      document.getElementById('stopService').addEventListener('click', async () => {
+        const result = await apiRequest('/ui/services/stop', { method: 'POST' });
+        document.getElementById('serviceOutput').textContent = render(result.body);
+        updateStatus(result.body);
+      });
+
+      document.getElementById('runTests').addEventListener('click', async () => {
+        const markers = document.getElementById('pytestMarkers').value.trim();
+        const args = document.getElementById('pytestArgs').value.trim();
+        const payload = {};
+        if (markers) payload.markers = markers;
+        if (args) payload.extra_args = args.split(' ');
+        const result = await apiRequest('/ui/tests/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderTestResult(result.body);
+      });
+
+      document.getElementById('loadLastTest').addEventListener('click', async () => {
+        const result = await apiRequest('/ui/tests/last');
+        renderTestResult(result.body);
+      });
+
+      function renderTestResult(data) {
+        if (!data) return;
+        document.getElementById('testCommand').textContent = render(data.command || 'n/a');
+        document.getElementById('testStdout').textContent = data.stdout || 'no stdout';
+        document.getElementById('testStderr').textContent = data.stderr || 'no stderr';
+        document.getElementById('testResult').textContent = render({
+          returncode: data.returncode,
+          started_at: data.started_at,
+          finished_at: data.finished_at,
+          succeeded: data.succeeded,
+        });
+      }
+
+      document.querySelectorAll('[data-fetch]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const path = btn.getAttribute('data-fetch');
+          const result = await apiRequest(path);
+          const body = result.body;
+          document.getElementById('dataOutput').textContent = render(body);
+        });
+      });
+
+      // Defaults
+      loadPrefs();
+      if (!document.getElementById('apiBase').value) {
+        document.getElementById('apiBase').value = window.location.origin;
+      }
+      refreshServiceStatus();
+    </script>
+  </body>
+</html>
