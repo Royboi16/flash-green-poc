@@ -24,6 +24,9 @@ def _create_connection() -> sqlite3.Connection:
     return conn
 
 
+_conn: sqlite3.Connection | None = None
+
+
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
     conn = _create_connection()
@@ -45,6 +48,8 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 
 
 def _ensure_conn(conn: sqlite3.Connection | None) -> tuple[sqlite3.Connection, bool]:
+    if _conn is not None and conn is None:
+        return _conn, False
     if conn is not None:
         return conn, False
     return _create_connection(), True
