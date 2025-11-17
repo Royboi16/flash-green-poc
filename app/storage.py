@@ -155,6 +155,28 @@ def get_trades(limit: int | None = None, conn: sqlite3.Connection | None = None)
         _close_if_owned(connection, owns_conn)
 
 
+def get_pnl_totals(conn: sqlite3.Connection | None = None) -> Dict[str, float]:
+    """Aggregate net, positive, and negative PnL from stored trades."""
+    connection, owns_conn = _ensure_conn(conn)
+    try:
+        row = connection.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN profit >= 0 THEN profit ELSE 0 END), 0) AS positive,
+                COALESCE(SUM(CASE WHEN profit < 0 THEN -profit ELSE 0 END), 0) AS negative,
+                COALESCE(SUM(profit), 0) AS net
+            FROM trades
+            """
+        ).fetchone()
+        return {
+            "positive": float(row["positive"]),
+            "negative": float(row["negative"]),
+            "net": float(row["net"]),
+        }
+    finally:
+        _close_if_owned(connection, owns_conn)
+
+
 # ─── Order‐tracking / idempotency ────────────────────────────────────────────
 
 
