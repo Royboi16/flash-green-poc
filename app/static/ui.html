@@ -169,6 +169,77 @@
       .hint {
         margin: 0.25rem 0 0;
       }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        background: #0b1224;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.75rem;
+        margin-top: 0.5rem;
+      }
+      .stat {
+        padding: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: #0f172a;
+      }
+      .stat .label {
+        display: block;
+        color: #94a3b8;
+        font-size: 0.9rem;
+      }
+      .stat .value {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-top: 0.35rem;
+      }
+      .table-wrapper {
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: #0b1224;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        padding: 0.65rem 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      th:last-child, td:last-child {
+        text-align: right;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #0f172a;
+        font-size: 0.9rem;
+      }
+      .pill.ok {
+        color: #22c55e;
+        border-color: rgba(34, 197, 94, 0.3);
+      }
+      .pill.err {
+        color: #f43f5e;
+        border-color: rgba(244, 63, 94, 0.35);
+      }
+      .pill.neutral {
+        color: #cbd5e1;
+      }
     </style>
   </head>
   <body>
@@ -366,9 +437,67 @@ USE_LIVE_FEED=false"></textarea>
 
       <div id="data" class="panel">
         <div class="callout">
-          Use the buttons below to fetch live data from the FastAPI endpoints. Results are shown as JSON where possible.
+          Live preview of mock trades and PnL totals. Data auto-refreshes; use the JSON buttons below for deeper debugging.
         </div>
-        <div class="actions" style="margin: 0.75rem 0;">
+        <div class="actions" style="margin: 0.75rem 0; justify-content: space-between; align-items: center;">
+          <div class="stack">
+            <span class="pill neutral" id="dataStatus">Waiting for first refresh…</span>
+            <span class="muted" id="dataUpdatedAt"></span>
+          </div>
+          <div class="actions" style="margin: 0;">
+            <button class="secondary" id="refreshData">Refresh now</button>
+          </div>
+        </div>
+
+        <div class="grid two-col" style="margin-top: 0.5rem;">
+          <div class="card">
+            <div class="stack" style="justify-content: space-between; align-items: center;">
+              <h4 style="margin: 0;">PnL totals</h4>
+              <span class="pill neutral" id="pnlStatus">Not loaded</span>
+            </div>
+            <div id="pnlError" class="callout" style="display: none; margin-top: 0.65rem;">Unable to load PnL right now.</div>
+            <div class="stats" id="pnlTotals" style="display: none;">
+              <div class="stat">
+                <span class="label">Net</span>
+                <span class="value" id="pnlNet">—</span>
+              </div>
+              <div class="stat">
+                <span class="label">Positive</span>
+                <span class="value" id="pnlPositive">—</span>
+              </div>
+              <div class="stat">
+                <span class="label">Negative</span>
+                <span class="value" id="pnlNegative">—</span>
+              </div>
+            </div>
+            <p class="muted" id="pnlEmpty" style="display: none; margin-top: 0.65rem;">No PnL records yet.</p>
+          </div>
+
+          <div class="card">
+            <div class="stack" style="justify-content: space-between; align-items: center;">
+              <h4 style="margin: 0;">Recent trades</h4>
+              <span class="pill neutral" id="tradesStatus">Not loaded</span>
+            </div>
+            <div id="tradesError" class="callout" style="display: none; margin-top: 0.65rem;">Unable to load trades right now.</div>
+            <p class="muted" id="tradesEmpty" style="margin-top: 0.65rem;">No trades yet.</p>
+            <div class="table-wrapper" id="tradesTable" style="display: none; margin-top: 0.65rem;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Qty (MWh)</th>
+                    <th>Spot price</th>
+                    <th>Future price</th>
+                    <th>Profit</th>
+                  </tr>
+                </thead>
+                <tbody id="tradesBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions" style="margin: 1rem 0 0.5rem;">
           <button data-fetch="/healthz">/healthz</button>
           <button data-fetch="/pnl">/pnl</button>
           <button data-fetch="/trades">/trades</button>
@@ -404,6 +533,8 @@ USE_LIVE_FEED=false"></textarea>
         { id: 'maxNotionalPerTrade', key: 'MAX_NOTIONAL_PER_TRADE' },
         { id: 'maxDailyLossGbp', key: 'MAX_DAILY_LOSS_GBP' },
       ];
+      let dataIntervalId;
+      const DATA_REFRESH_MS = 8000;
       tabs.forEach(btn => {
         btn.addEventListener('click', () => {
           tabs.forEach(b => b.classList.remove('active'));
@@ -565,6 +696,148 @@ USE_LIVE_FEED=false"></textarea>
         return typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
       }
 
+      function formatCurrency(value) {
+        if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+        return `£${value.toFixed(2)}`;
+      }
+
+      function formatNumber(value, digits = 2) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return '—';
+        return parsed.toFixed(digits);
+      }
+
+      function setPill(element, status, text) {
+        if (!element) return;
+        element.className = `pill ${status}`;
+        element.textContent = text;
+      }
+
+      function renderPnl(pnl) {
+        const pnlTotals = document.getElementById('pnlTotals');
+        const pnlEmpty = document.getElementById('pnlEmpty');
+        const pnlError = document.getElementById('pnlError');
+
+        if (!pnl || typeof pnl !== 'object') {
+          pnlTotals.style.display = 'none';
+          pnlEmpty.style.display = 'none';
+          pnlError.style.display = 'block';
+          setPill(document.getElementById('pnlStatus'), 'err', 'Error');
+          return;
+        }
+
+        const hasData = ['net', 'positive', 'negative'].some(key => typeof pnl[key] === 'number');
+        pnlError.style.display = 'none';
+        pnlTotals.style.display = hasData ? 'grid' : 'none';
+        pnlEmpty.style.display = hasData ? 'none' : 'block';
+        setPill(document.getElementById('pnlStatus'), hasData ? 'ok' : 'neutral', hasData ? 'Updated' : 'No data');
+
+        document.getElementById('pnlNet').textContent = formatCurrency(pnl.net);
+        document.getElementById('pnlPositive').textContent = formatCurrency(pnl.positive);
+        document.getElementById('pnlNegative').textContent = formatCurrency(pnl.negative);
+      }
+
+      function renderTrades(trades) {
+        const table = document.getElementById('tradesTable');
+        const empty = document.getElementById('tradesEmpty');
+        const error = document.getElementById('tradesError');
+        const tbody = document.getElementById('tradesBody');
+
+        if (!Array.isArray(trades)) {
+          error.style.display = 'block';
+          empty.style.display = 'none';
+          table.style.display = 'none';
+          setPill(document.getElementById('tradesStatus'), 'err', 'Error');
+          return;
+        }
+
+        error.style.display = 'none';
+        tbody.innerHTML = '';
+        if (trades.length === 0) {
+          empty.style.display = 'block';
+          table.style.display = 'none';
+          setPill(document.getElementById('tradesStatus'), 'neutral', 'No trades');
+          return;
+        }
+
+        empty.style.display = 'none';
+        table.style.display = 'block';
+        setPill(document.getElementById('tradesStatus'), 'ok', 'Updated');
+
+        trades.forEach(trade => {
+          const row = document.createElement('tr');
+          const timestampValue = trade.timestamp !== undefined ? Number(trade.timestamp) : NaN;
+          const timestamp = Number.isFinite(timestampValue) ? new Date(timestampValue * 1000) : null;
+          const timeCell = timestamp ? timestamp.toLocaleString() : 'n/a';
+          const cells = [
+            timeCell,
+            formatNumber(trade.qty_mwh),
+            trade.spot_price !== undefined ? `£${formatNumber(trade.spot_price)}` : '—',
+            trade.fut_price !== undefined ? `£${formatNumber(trade.fut_price)}` : '—',
+            trade.profit !== undefined ? formatCurrency(Number(trade.profit)) : '—',
+          ];
+          cells.forEach(text => {
+            const td = document.createElement('td');
+            td.textContent = text;
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        });
+      }
+
+      function updateDataStatus(text, status = 'neutral') {
+        setPill(document.getElementById('dataStatus'), status, text);
+      }
+
+      function updateDataTimestamp() {
+        const el = document.getElementById('dataUpdatedAt');
+        el.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      }
+
+      async function refreshData() {
+        updateDataStatus('Refreshing…');
+        try {
+          const [pnlResult, tradesResult] = await Promise.all([
+            apiRequest('/pnl'),
+            apiRequest('/trades'),
+          ]);
+
+          if (!pnlResult.response.ok) {
+            throw new Error(`PnL request failed: ${pnlResult.response.status}`);
+          }
+          if (!tradesResult.response.ok) {
+            throw new Error(`Trades request failed: ${tradesResult.response.status}`);
+          }
+
+          renderPnl(pnlResult.body);
+          renderTrades(tradesResult.body);
+          updateDataStatus('Live', 'ok');
+          updateDataTimestamp();
+          document.getElementById('dataOutput').textContent = render({
+            pnl: pnlResult.body,
+            trades: tradesResult.body,
+          });
+        } catch (err) {
+          console.error('Error refreshing data tab', err);
+          updateDataStatus('Error fetching data', 'err');
+          setPill(document.getElementById('pnlStatus'), 'err', 'Error');
+          setPill(document.getElementById('tradesStatus'), 'err', 'Error');
+          document.getElementById('pnlError').style.display = 'block';
+          document.getElementById('pnlTotals').style.display = 'none';
+          document.getElementById('pnlEmpty').style.display = 'none';
+          document.getElementById('tradesError').style.display = 'block';
+          document.getElementById('tradesTable').style.display = 'none';
+          document.getElementById('tradesEmpty').style.display = 'none';
+          document.getElementById('dataUpdatedAt').textContent = '';
+        }
+      }
+
+      function startDataInterval() {
+        if (dataIntervalId) clearInterval(dataIntervalId);
+        refreshData();
+        dataIntervalId = setInterval(refreshData, DATA_REFRESH_MS);
+      }
+
       async function refreshState() {
         const result = await apiRequest('/ui/state');
         document.getElementById('configState').textContent = render(result.body);
@@ -676,6 +949,8 @@ USE_LIVE_FEED=false"></textarea>
         document.getElementById('apiBase').value = window.location.origin;
       }
       refreshServiceStatus();
+      document.getElementById('refreshData').addEventListener('click', () => refreshData());
+      startDataInterval();
     </script>
   </body>
 </html>
