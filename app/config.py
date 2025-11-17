@@ -25,7 +25,6 @@ try:
         load_dotenv(env_path)
 except ModuleNotFoundError:
     pass
-    
 
 
 SECRET_FIELD_MAP: Dict[str, str] = {
@@ -103,27 +102,31 @@ def _load_aws_secret(region: str, secret_id: str) -> Dict[str, str]:
 class Settings(BaseSettings):
     # strategy knobs
     neg_threshold: float = Field(0, description="Spot ≤ this triggers buy (£/MWh)")
-    spread_min:   PositiveFloat = Field(50, description="Min fut-spot spread (£/MWh)")
+    spread_min: PositiveFloat = Field(50, description="Min fut-spot spread (£/MWh)")
     kelly_bank_gbp: PositiveFloat = Field(50_000, description="Kelly bank size (£)")
 
     # ── Phase 4: risk & limit knobs ────────────────────────────────────────
-    trading_enabled:       bool    = Field(True,     description="Global master switch")
-    max_notional_per_trade:float   = Field(10_000.0, description="Max exposure per cycle (£)")
-    max_daily_loss_gbp:    float   = Field(500.0,    description="Stop trading after this daily loss (£)")
+    trading_enabled: bool = Field(True, description="Global master switch")
+    max_notional_per_trade: float = Field(
+        10_000.0, description="Max exposure per cycle (£)"
+    )
+    max_daily_loss_gbp: float = Field(
+        500.0, description="Stop trading after this daily loss (£)"
+    )
 
     # mock-feed params
     pl_sigma: PositiveFloat = Field(25, description="Std-dev for spot noise")
-    fut_mu:   float         = Field(65, description="Mean for futures noise")
+    fut_mu: float = Field(65, description="Mean for futures noise")
 
     # ports
     metrics_port: conint(gt=0, lt=65535) = Field(8000, description="Prometheus port")
-    api_port:     conint(gt=0, lt=65535) = Field(8002, description="FastAPI port")
+    api_port: conint(gt=0, lt=65535) = Field(8002, description="FastAPI port")
 
     # externals (placeholders)
     bmrs_api_key: Optional[str] = None
-    ice_user:     Optional[str] = None
-    ice_pass:     Optional[str] = None
-    hardhat_rpc:  Optional[AnyUrl] = Field("http://127.0.0.1:8545", description="EVM RPC")
+    ice_user: Optional[str] = None
+    ice_pass: Optional[str] = None
+    hardhat_rpc: Optional[AnyUrl] = Field("http://127.0.0.1:8545", description="EVM RPC")
 
     # ----------------------------------------------------------------------
     # Logging
@@ -161,11 +164,17 @@ class Settings(BaseSettings):
         env="LIVE_API_SECRET",
         description="CCXT API secret",
     )
-    
+
     # How long to poll before cancelling
-    order_timeout_secs: int = Field(30, env="ORDER_TIMEOUT_SECS", description="Max seconds to wait for fill")
-    order_poll_interval: float = Field(1.0, env="ORDER_POLL_INTERVAL", description="Seconds between fetch_order calls")
-    
+    order_timeout_secs: int = Field(
+        30, env="ORDER_TIMEOUT_SECS", description="Max seconds to wait for fill"
+    )
+    order_poll_interval: float = Field(
+        1.0,
+        env="ORDER_POLL_INTERVAL",
+        description="Seconds between fetch_order calls",
+    )
+
     # Live ICE integration (optional unless USE_ICE_LIVE=1)
     use_ice_live: bool = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
     ice_api_url: Optional[AnyUrl] = Field(
@@ -324,14 +333,15 @@ class Settings(BaseSettings):
 
         return model
 
-
     class Config:
         env_file_encoding = "utf-8"
-        case_sensitive    = False
-        extra             = "ignore"
+        case_sensitive = False
+        extra = "ignore"
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
 
 settings = get_settings()  # singleton
