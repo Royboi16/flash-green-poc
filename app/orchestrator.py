@@ -81,6 +81,64 @@ def _settle_open_orders(
         update_order(order.id, filled, avg_price, status, conn=conn)
 
 
+LOAN_LIMIT_GBP = 100_000
+
+
+def _persist_buy_order(fill_a, qty: float) -> str:
+    order_id = fill_a.order_id or f"sim-{datetime.utcnow().isoformat()}"
+    with get_connection() as conn:
+        save_order(
+            Order(
+                id=order_id,
+                timestamp=datetime.utcnow(),
+                symbol=settings.ice_symbol,
+                side="BUY",
+                qty_requested=qty,
+                qty_filled=fill_a.qty_mwh,
+                avg_price=fill_a.price,
+                status="PENDING",
+            ),
+            conn=conn,
+        )
+    return order_id
+
+
+def _record_trade(fill_a, fill_b, qty: float, spot: float, fut: float) -> float:
+    global _daily_loss
+
+    profit = fill_a.qty_mwh * fill_a.price + fill_b.qty_mwh * fill_b.price - LOAN_LIMIT_GBP
+
+    if profit >= 0:
+        METRICS.profit_positive.inc(profit)
+    else:
+        loss = -profit
+        METRICS.profit_negative.inc(loss)
+        _daily_loss += loss
+        METRICS.daily_loss.set(_daily_loss)
+
+    with get_connection() as conn:
+        save_trade(
+            qty_mwh=qty,
+            spot_price=spot,
+            fut_price=fut,
+            profit=profit,
+            conn=conn,
+        )
+
+    return profit
+
+
+def _check_notional(fill_a) -> bool:
+    trade_notional = abs(fill_a.qty_mwh * fill_a.price)
+    if trade_notional > settings.max_notional_per_trade:
+        logger.warning(
+            "Notional £%.2f > cap £%s", trade_notional, settings.max_notional_per_trade
+        )
+        METRICS.trades_blocked.inc()
+        return False
+    return True
+
+
 def run_cycle() -> bool:
     global _current_day, _daily_loss
 
@@ -149,62 +207,55 @@ def run_cycle() -> bool:
         return False
 
     if settings.use_web3_loan:
-        loan = FlashLoanAdapter(
-            lender_address=settings.flash_loan_contract,
-            private_key=settings.lender_private_key,
-            rpc_url=str(settings.hardhat_rpc),
-        )
-        loan.flash_loan(
-            receiver_address=settings.receiver_address,
-            amount_wei=100_000 * 10**18,
-        )
-        return True
+        try:
+            loan = FlashLoanAdapter(
+                lender_address=settings.flash_loan_contract,
+                private_key=settings.lender_private_key,
+                rpc_url=str(settings.hardhat_rpc),
+            )
+            loan.flash_loan(
+                receiver_address=settings.receiver_address,
+                amount_wei=LOAN_LIMIT_GBP * 10**18,
+            )
 
-    with FlashLoanAdapter(limit_gbp=100_000) as wallet:
+            try:
+                fill_a = POWER.buy(qty, max_price=spot)
+            except RuntimeError as exc:
+                logger.warning("Power leg failed during flash-loan flow: %s", exc)
+                METRICS.trades_blocked.inc()
+                return False
+
+            if not _check_notional(fill_a):
+                return False
+
+            _persist_buy_order(fill_a, qty)
+            fill_b = ice.sell(qty)
+            _record_trade(fill_a, fill_b, qty, spot, fut)
+            return True
+        except Exception:
+            METRICS.trades_blocked.inc()
+            logger.exception("Flash-loan trade failed")
+            return False
+
+    with FlashLoanAdapter(limit_gbp=LOAN_LIMIT_GBP) as wallet:
         try:
             try:
                 fill_a = POWER.buy(qty, max_price=spot)
             except RuntimeError:
                 return False
 
-            with get_connection() as conn:
-                save_order(
-                    Order(
-                        id=fill_a.order_id,
-                        timestamp=datetime.utcnow(),
-                        symbol=settings.ice_symbol,
-                        side="BUY",
-                        qty_requested=qty,
-                        qty_filled=fill_a.qty_mwh,
-                        avg_price=fill_a.price,
-                        status="PENDING",
-                    ),
-                    conn=conn,
-                )
+            if not _check_notional(fill_a):
+                return False
+
+            _persist_buy_order(fill_a, qty)
 
             wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
             fill_b = ice.sell(qty)
             wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
-            profit = wallet["gbp"] - 100_000
-            if profit >= 0:
-                METRICS.profit_positive.inc(profit)
-            else:
-                METRICS.profit_negative.inc(-profit)
-
-            if profit < 0:
-                _daily_loss += -profit
-                METRICS.daily_loss.set(_daily_loss)
-
-            with get_connection() as conn:
-                save_trade(
-                    qty_mwh=qty,
-                    spot_price=spot,
-                    fut_price=fut,
-                    profit=profit,
-                    conn=conn,
-                )
+            profit = _record_trade(fill_a, fill_b, qty, spot, fut)
+            wallet["gbp"] = LOAN_LIMIT_GBP + profit
 
             return True
 
