@@ -17,6 +17,10 @@ secrets from HashiCorp Vault or AWS Secrets Manager.
 `python-dotenv` is already wired up in `app/config.py`, so `poetry run python -m
 app.orchestrator` will load the `.env` file automatically.
 
+API endpoints that expose metrics or trading data require a shared secret in the
+`X-API-Key` header. Set `API_KEY` in your `.env` (or secret manager) and pass it
+with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`.
+
 ### Environment templates
 
 | File | When to use | Highlights |
@@ -42,7 +46,7 @@ validating:
 
 Only the fields listed below are fetched from a secret backend:
 `LIVE_API_KEY`, `LIVE_API_SECRET`, `ICE_API_KEY`, `ICE_API_SECRET`,
-`FLASH_LOAN_CONTRACT`, `FLASH_LOAN_RECEIVER`, and `LENDER_KEY`.
+`FLASH_LOAN_CONTRACT`, `FLASH_LOAN_RECEIVER`, `LENDER_KEY`, and `API_KEY`.
 
 Validation runs **after** secrets are loaded, so misconfigured environments fail
 fast with actionable error messages.

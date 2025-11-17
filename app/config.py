@@ -35,6 +35,7 @@ SECRET_FIELD_MAP: Dict[str, str] = {
     "flash_loan_contract": "FLASH_LOAN_CONTRACT",
     "receiver_address": "FLASH_LOAN_RECEIVER",
     "lender_private_key": "LENDER_KEY",
+    "api_key": "API_KEY",
 }
 
 
@@ -121,6 +122,11 @@ class Settings(BaseSettings):
     # ports
     metrics_port: conint(gt=0, lt=65535) = Field(8000, description="Prometheus port")
     api_port: conint(gt=0, lt=65535) = Field(8002, description="FastAPI port")
+    api_key: Optional[str] = Field(
+        None,
+        env="API_KEY",
+        description="Shared secret required for protected HTTP endpoints",
+    )
 
     # externals (placeholders)
     bmrs_api_key: Optional[str] = None

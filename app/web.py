@@ -2,11 +2,12 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from app.config import settings
 from app.logger import logger
 from app.metrics import METRICS
 from app.storage import get_open_orders, get_trades
@@ -46,6 +47,25 @@ class OrderOut(BaseModel):
         from_attributes = True
 
 
+# ─── Auth ────────────────────────────────────────────────────────────────────
+
+
+async def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    expected_key = settings.api_key
+    if not expected_key:
+        logger.warning("Protected endpoint called without API_KEY configured")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key authentication is not configured",
+        )
+
+    if x_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+
 # ─── Health & metrics ────────────────────────────────────────────────────────
 
 
@@ -54,13 +74,13 @@ async def health():
     return {"status": "ok"}
 
 
-@api.get("/metrics")
+@api.get("/metrics", dependencies=[Depends(require_api_key)])
 async def prom():
     data = generate_latest()
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
 
-@api.get("/pnl")
+@api.get("/pnl", dependencies=[Depends(require_api_key)])
 async def pnl():
     return {
         "profit": METRICS.profit_positive._value.get(),
@@ -71,7 +91,7 @@ async def pnl():
 # ─── Data endpoints ──────────────────────────────────────────────────────────
 
 
-@api.get("/trades", response_model=List[TradeOut])
+@api.get("/trades", response_model=List[TradeOut], dependencies=[Depends(require_api_key)])
 async def trades(limit: int = 100):
     """
     Retrieve up to `limit` most recent trades.
@@ -79,7 +99,7 @@ async def trades(limit: int = 100):
     return get_trades(limit=limit)
 
 
-@api.get("/orders/open", response_model=List[OrderOut])
+@api.get("/orders/open", response_model=List[OrderOut], dependencies=[Depends(require_api_key)])
 async def open_orders():
     """
     List any in-flight (open) orders.
