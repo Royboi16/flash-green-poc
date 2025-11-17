@@ -76,15 +76,19 @@ def save_trade(
         )
 
 
-def get_trades() -> List[Dict[str, Any]]:
-    """Fetch all past trades for your PnL API."""
-    cur = _conn.execute(
-        """
-        SELECT qty_mwh, spot_price, fut_price, profit, timestamp
+def get_trades(limit: int | None = None) -> List[Dict[str, Any]]:
+    """Fetch past trades for your PnL API ordered by recency."""
+    sql = """
+        SELECT id, qty_mwh, spot_price, fut_price, profit, timestamp
           FROM trades
-         ORDER BY id
-        """
-    )
+         ORDER BY timestamp DESC, id DESC
+    """
+    params: tuple[Any, ...] = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
+
+    cur = _conn.execute(sql, params)
     return [dict(row) for row in cur.fetchall()]
 
 # ─── Order‐tracking / idempotency ────────────────────────────────────────────
