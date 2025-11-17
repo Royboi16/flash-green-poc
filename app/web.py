@@ -2,6 +2,8 @@
 from datetime import datetime
 from typing import List, Optional
 
+import sqlite3
+
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
@@ -10,7 +12,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app.config import settings
 from app.logger import logger
 from app.metrics import METRICS
-from app.storage import get_open_orders, get_trades
+from app.storage import connection_dependency, get_open_orders, get_trades
 
 api = FastAPI(
     title="Flash-Green PoC",
@@ -92,20 +94,20 @@ async def pnl():
 
 
 @api.get("/trades", response_model=List[TradeOut], dependencies=[Depends(require_api_key)])
-async def trades(limit: int = 100):
+async def trades(limit: int = 100, conn: sqlite3.Connection = Depends(connection_dependency)):
     """
     Retrieve up to `limit` most recent trades.
     """
-    return get_trades(limit=limit)
+    return get_trades(limit=limit, conn=conn)
 
 
 @api.get("/orders/open", response_model=List[OrderOut], dependencies=[Depends(require_api_key)])
-async def open_orders():
+async def open_orders(conn: sqlite3.Connection = Depends(connection_dependency)):
     """
     List any in-flight (open) orders.
     """
     try:
-        return get_open_orders()
+        return get_open_orders(conn=conn)
     except Exception:
         # log full traceback
         logger.error("Error in /orders/open", exc_info=True)
