@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   pull_request:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -12,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install dependencies
@@ -24,22 +28,55 @@ jobs:
       - name: Run tests
         run: poetry run pytest -q
 
-  build-and-publish:
+  preflight:
     needs: lint-and-test
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      API_KEY: ${{ secrets.API_KEY }}
+      CLIENT_CERT_SUBJECT_HEADER: ci-preflight
+      DATABASE_URL: sqlite:///:memory:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker image
+      - name: Fail when critical secrets are absent
         run: |
-          docker build -t yourorg/flash-green-poc:${{ github.sha }} .
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
+          if [ -z "${API_KEY:-}" ]; then
+            echo "API_KEY must be provided via repository secrets" >&2
+            exit 1
+          fi
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Push image
+          python-version: "3.11"
+      - name: Install dependencies
         run: |
-          docker push yourorg/flash-green-poc:${{ github.sha }}
+          pip install poetry
+          poetry install
+      - name: Run deployment preflight
+        run: |
+          poetry run python scripts/preflight_check.py
+
+  build-and-publish:
+    needs: [lint-and-test, preflight]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

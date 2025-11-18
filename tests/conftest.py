@@ -9,6 +9,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("API_KEY", "test-key")
+os.environ.setdefault("CLIENT_CERT_SUBJECT_HEADER", "X-SSL-Client-Subject")
+os.environ.setdefault("FORWARDED_PROTO_HEADER", "x-forwarded-proto")
+os.environ.setdefault("REQUIRE_HTTPS", "0")
 
 import app.db as db
 import app.storage as storage

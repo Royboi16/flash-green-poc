@@ -163,6 +163,11 @@ including the mandatory `API_KEY`.
 Configuration regressions are caught via `pytest -k config`, which instantiates
 `Settings` under multiple feature combinations.
 
+### Deployment preflight
+
+- Validate deployment inputs before rollout: `python scripts/preflight_check.py --env-file .env`.
+- Operational procedures for rollout/rollback, telemetry, and backups are documented in `docs/runbook.md`.
+
 ## Operational runbooks (atomic energy-versus-futures arbitrage)
 
 ### Live Powerledger + ICE connectivity
