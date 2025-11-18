@@ -14,6 +14,9 @@ COPY pyproject.toml poetry.lock ./
 
 # 2) Copy your package code so Poetry can see the "app" module
 COPY app ./app
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY scripts ./scripts
 
 # 3) Install runtime deps only (no dev)
 RUN pip install poetry && \
@@ -31,6 +34,8 @@ RUN addgroup --system app && adduser --system --ingroup app app
 COPY --from=build /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=build /app              /app
 
+RUN chmod +x /app/scripts/entrypoint.sh
+
 USER app
 ENV PYTHONUNBUFFERED=1
 
@@ -38,4 +43,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 8000 8002
 
 # launch your orchestrator
-ENTRYPOINT ["python", "-m", "app.orchestrator"]
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]

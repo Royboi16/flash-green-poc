@@ -38,6 +38,16 @@ is missing or incorrect and are rate limited with audit logging. See
 `docs/deployment.md` for the minimum security checklist before exposing the
 service.
 
+## Database & migrations
+
+- Configure `DATABASE_URL` (or the `DB_*` fields) to point at your managed
+  PostgreSQL/MySQL instance. The provided docker-compose file ships with a
+  Postgres service for local work.
+- Alembic migrations live under `migrations/` and are executed automatically by
+  `scripts/entrypoint.sh` (used by the Dockerfile) and the docker-compose `bot`
+  service before the orchestrator starts. Apply them manually with
+  `poetry run alembic upgrade head` when running locally outside of Docker.
+
 ## Local API + UI
 
 Run the FastAPI server with uvicorn and open the bundled control panel at `/ui`:

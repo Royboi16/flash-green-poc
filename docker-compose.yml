@@ -1,5 +1,16 @@
 # docker-compose.yml
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: flashgreen
+      POSTGRES_PASSWORD: flashgreen
+      POSTGRES_DB: flash_green
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
   hardhat:
     image: node:20-alpine
     working_dir: /app/hardhat
@@ -15,16 +26,21 @@ services:
     volumes:
       - .:/app                # mount your source
       - ./data:/app/data:ro
+    environment:
+      DATABASE_URL: postgresql+psycopg2://flashgreen:flashgreen@db:5432/flash_green
     command: >
       bash -c "
       pip install --no-cache-dir poetry && \
       poetry config virtualenvs.create false && \
       poetry install --no-interaction --no-ansi && \
+      alembic upgrade head && \
       python -m app.orchestrator
       "
     ports:
       - "8002:8002"           # FastAPI JSON
       - "8000:8000"           # Prom exporter
+    depends_on:
+      - db
 
   prometheus:
     image: prom/prometheus:v2.52.0
@@ -47,5 +63,6 @@ services:
 
 volumes:
   grafana-data:
+  db-data:
 
 

@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./data:/app/data:ro                  # mount your CSVs (read-only)
+    environment:
+      DATABASE_URL: "${DATABASE_URL}"
     ports:
       - "8000:8000"                          # Prometheus metrics
       - "8002:8002"                          # FastAPI health & PnL JSON

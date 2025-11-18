@@ -1,15 +1,9 @@
-# tests/test_orchestrator.py
-import sys
+from datetime import date, datetime
 import types
-from datetime import date
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
+import app.db as db
 import app.metrics as metrics_module
 import app.storage as storage
 from app import orchestrator
@@ -30,16 +24,10 @@ class DummyGauge(DummyCounter):
         self.value = value
 
 
-def _patch_db(monkeypatch, tmp_path):
-    db_path = tmp_path / "orchestrator.sqlite"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(storage, "_DB_PATH", db_path)
-    storage._init_schema()
-    storage._conn = None
-    with storage.get_connection() as conn:
-        conn.execute("DELETE FROM trades")
-        conn.execute("DELETE FROM orders")
-    return db_path
+def _patch_db():
+    engine = db.override_engine("sqlite:///:memory:")
+    storage.Base.metadata.create_all(engine)
+    return engine
 
 
 @pytest.fixture
@@ -58,8 +46,8 @@ def metrics(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def reset_state(monkeypatch, tmp_path):
-    _patch_db(monkeypatch, tmp_path)
+def reset_state(monkeypatch):
+    _patch_db()
     orchestrator._daily_loss = 0.0
     orchestrator._current_day = date.today()
     monkeypatch.setattr(orchestrator.settings, "trading_enabled", True)
