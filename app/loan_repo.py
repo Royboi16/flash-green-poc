@@ -1,6 +1,7 @@
 # app/loan_repo.py
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from app.logger import logger
@@ -21,6 +22,7 @@ class RepoSettlement:
     tx_hash: str
     cash_token: str
     asset_token: str
+    timestamp: str
 
 
 class FnalityHQLAXFlashAdapter:
@@ -67,6 +69,7 @@ class FnalityHQLAXFlashAdapter:
                 tx_hash=receipt.transactionHash.hex(),
                 cash_token=self.cash_token,
                 asset_token=self.asset_token,
+                timestamp=datetime.utcnow().isoformat(),
             )
             logger.info(
                 "Fnality/HQLAˣ repo pre-commit succeeded: tx=%s", settlement.tx_hash

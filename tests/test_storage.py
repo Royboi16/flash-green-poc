@@ -14,7 +14,11 @@ def _temp_conn() -> sqlite3.Connection:
             spot_price REAL,
             fut_price REAL,
             profit REAL,
-            timestamp TEXT
+            timestamp TEXT,
+            repo_tx_hash TEXT,
+            repo_cash_token TEXT,
+            repo_asset_token TEXT,
+            repo_timestamp TEXT
         );
         CREATE TABLE orders (
             id TEXT PRIMARY KEY,
@@ -53,13 +57,53 @@ def test_get_trades_orders_by_recency(monkeypatch):
     with conn:
         conn.executemany(
             """
-            INSERT INTO trades (qty_mwh, spot_price, fut_price, profit, timestamp)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO trades (
+                qty_mwh,
+                spot_price,
+                fut_price,
+                profit,
+                timestamp,
+                repo_tx_hash,
+                repo_cash_token,
+                repo_asset_token,
+                repo_timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                (1.0, 10.0, 20.0, 5.0, "2024-01-01T00:00:00"),
-                (1.1, 11.0, 21.0, 6.0, "2024-01-02T00:00:00"),
-                (1.2, 12.0, 22.0, 7.0, "2024-01-02T00:00:00"),
+                (
+                    1.0,
+                    10.0,
+                    20.0,
+                    5.0,
+                    "2024-01-01T00:00:00",
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                (
+                    1.1,
+                    11.0,
+                    21.0,
+                    6.0,
+                    "2024-01-02T00:00:00",
+                    "tx-2",
+                    "CASH",
+                    "ASSET",
+                    "2024-01-02T00:00:01",
+                ),
+                (
+                    1.2,
+                    12.0,
+                    22.0,
+                    7.0,
+                    "2024-01-02T00:00:00",
+                    "tx-3",
+                    "CASH",
+                    "ASSET",
+                    "2024-01-02T00:00:02",
+                ),
             ],
         )
 
@@ -67,6 +111,10 @@ def test_get_trades_orders_by_recency(monkeypatch):
 
     assert [t["id"] for t in trades] == [3, 2]
     assert trades[0]["timestamp"] == "2024-01-02T00:00:00"
+    assert trades[0]["repo_tx_hash"] == "tx-3"
+    assert trades[0]["repo_cash_token"] == "CASH"
+    assert trades[0]["repo_asset_token"] == "ASSET"
+    assert trades[0]["repo_timestamp"] == "2024-01-02T00:00:02"
 
 
 def test_orders_use_shared_connection(monkeypatch):
