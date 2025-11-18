@@ -15,6 +15,24 @@ METRICS.profit_negative = Counter(
 )
 METRICS.spread = Gauge("last_spread", "Latest £/MWh spread")
 
+# Fnality/HQLAˣ atomic repo flash-loan path
+METRICS.flash_repo_attempts = Counter(
+    "flash_repo_attempts_total",
+    "Number of Fnality/HQLAˣ repo attempts",
+)
+METRICS.flash_repo_commits = Counter(
+    "flash_repo_commits_total",
+    "Successful Fnality/HQLAˣ atomic repo commits",
+)
+METRICS.flash_repo_failures = Counter(
+    "flash_repo_failures_total",
+    "Failed Fnality/HQLAˣ repo submissions",
+)
+METRICS.flash_repo_rollbacks = Counter(
+    "flash_repo_rollbacks_total",
+    "Rollbacks triggered after repo commit failures",
+)
+
 # Phase 4: risk & limits
 METRICS.daily_loss = Gauge(
     "gbp_daily_loss_total",

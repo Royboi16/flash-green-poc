@@ -255,6 +255,16 @@ class Settings(BaseSettings):
         env="LENDER_KEY",
         description="Private key for the account that owns the flash-loan contract",
     )
+    fnality_cash_token: str = Field(
+        "GBP_FNAL",
+        env="FNALITY_CASH_TOKEN",
+        description="Cash token symbol cleared on Fnality",
+    )
+    hqlax_token: str = Field(
+        "HQLAX_GILT",
+        env="HQLAX_TOKEN",
+        description="Tokenised asset identifier cleared on HQLAˣ",
+    )
 
     # ----------------------------------------------------------------------
     # Secret backends
