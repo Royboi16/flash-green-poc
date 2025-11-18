@@ -86,8 +86,11 @@ async def require_api_key(
     expected_key = settings.api_key
 
     if not expected_key:
-        logger.warning("API_KEY is not configured; skipping authentication")
-        return ""
+        logger.error("API_KEY is not configured; refusing to serve requests")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API_KEY is not configured",
+        )
 
     if not x_api_key or x_api_key != expected_key:
         raise HTTPException(
