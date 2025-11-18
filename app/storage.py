@@ -106,6 +106,7 @@ def save_trade(
     repo_timestamp: str | datetime | None = None,
     session: Session | None = None,
     conn: Session | None = None,
+    commit: bool = True,
 ) -> None:
     """Persist a completed trade (used by your PoC)."""
 
@@ -126,7 +127,10 @@ def save_trade(
                 repo_timestamp=repo_ts,
             )
         )
-        db_session.commit()
+        if commit:
+            db_session.commit()
+        else:
+            db_session.flush()
     finally:
         _close_session(db_session, owns_session)
 
@@ -180,6 +184,7 @@ def save_order(
     order: Order,
     session: Session | None = None,
     conn: Session | None = None,
+    commit: bool = True,
 ) -> None:
     """Insert or replace an in‐flight ICE order."""
 
@@ -197,7 +202,10 @@ def save_order(
                 timestamp=_coerce_datetime(order.timestamp) or datetime.utcnow(),
             )
         )
-        db_session.commit()
+        if commit:
+            db_session.commit()
+        else:
+            db_session.flush()
     finally:
         _close_session(db_session, owns_session)
 
@@ -240,6 +248,7 @@ def update_order(
     status: str,
     session: Session | None = None,
     conn: Session | None = None,
+    commit: bool = True,
 ) -> None:
     """Update status/filled/price for an existing order."""
 
@@ -251,7 +260,10 @@ def update_order(
             .values(qty_filled=filled, avg_price=avg_price, status=status)
         )
         db_session.execute(stmt)
-        db_session.commit()
+        if commit:
+            db_session.commit()
+        else:
+            db_session.flush()
     finally:
         _close_session(db_session, owns_session)
 
@@ -270,4 +282,27 @@ def connection_dependency() -> Iterator[Session]:
 def get_connection() -> Iterator[Session]:
     with get_session() as session:
         yield session
+
+
+@contextmanager
+def transactional_session(
+    session: Session | None = None, conn: Session | None = None
+) -> Iterator[Session]:
+    """Provide a session that commits or rolls back atomically.
+
+    When callers manage their own transaction boundaries, they should use this
+    context manager and pass ``commit=False`` to ``save_trade``/``save_order``
+    so both records are flushed together. Any exception triggers a rollback to
+    avoid partial persistence.
+    """
+
+    db_session, owns_session = _ensure_session(session, conn)
+    try:
+        yield db_session
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
+    finally:
+        _close_session(db_session, owns_session)
 

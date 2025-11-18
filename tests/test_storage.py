@@ -117,3 +117,61 @@ def test_orders_use_shared_connection():
             ).scalars()
         ]
         assert list(statuses) == ["NEW", "FILLED"]
+
+
+def test_transactional_session_commits_and_rolls_back():
+    _setup_db()
+
+    try:
+        with storage.transactional_session() as session:
+            storage.save_order(
+                storage.Order(
+                    id="o-10",
+                    symbol="SYM",
+                    side="BUY",
+                    qty_requested=1.0,
+                    qty_filled=1.0,
+                    avg_price=50.0,
+                    status="PENDING",
+                    timestamp=datetime.utcnow(),
+                ),
+                session=session,
+                commit=False,
+            )
+            raise RuntimeError("force rollback")
+    except RuntimeError:
+        pass
+
+    with db.SessionLocal() as session:
+        orders = session.execute(select(storage.OrderRecord)).scalars().all()
+        assert not orders
+
+    with storage.transactional_session() as session:
+        storage.save_order(
+            storage.Order(
+                id="o-11",
+                symbol="SYM",
+                side="BUY",
+                qty_requested=2.0,
+                qty_filled=2.0,
+                avg_price=60.0,
+                status="PENDING",
+                timestamp=datetime.utcnow(),
+            ),
+            session=session,
+            commit=False,
+        )
+        storage.save_trade(
+            qty_mwh=2.0,
+            spot_price=10.0,
+            fut_price=20.0,
+            profit=5.0,
+            session=session,
+            commit=False,
+        )
+
+    with db.SessionLocal() as session:
+        orders = session.execute(select(storage.OrderRecord)).scalars().all()
+        trades = session.execute(select(storage.Trade)).scalars().all()
+        assert len(orders) == 1
+        assert len(trades) == 1

@@ -23,6 +23,7 @@ from app.storage import (
     get_open_orders,
     save_order,
     save_trade,
+    transactional_session,
     update_order,
 )
 from app.strategy import QuoteSnapshot, TradePlan, select_route
@@ -140,22 +141,25 @@ def _settle_open_orders(
             )
 
 
-def _persist_buy_order(fill_a, qty: float) -> str:
+def _persist_buy_order(
+    fill_a, qty: float, session: Session | None = None, status: str = "PENDING"
+) -> str:
     order_id = fill_a.order_id or f"sim-{datetime.utcnow().isoformat()}"
-    with get_connection() as conn:
-        save_order(
-            Order(
-                id=order_id,
-                timestamp=datetime.utcnow(),
-                symbol=settings.ice_symbol,
-                side="BUY",
-                qty_requested=qty,
-                qty_filled=fill_a.qty_mwh,
-                avg_price=fill_a.price,
-                status="PENDING",
-            ),
-            session=conn,
-        )
+    order = Order(
+        id=order_id,
+        timestamp=datetime.utcnow(),
+        symbol=settings.ice_symbol,
+        side="BUY",
+        qty_requested=qty,
+        qty_filled=fill_a.qty_mwh,
+        avg_price=fill_a.price,
+        status=status,
+    )
+    if session:
+        save_order(order, session=session, commit=False)
+    else:
+        with get_connection() as conn:
+            save_order(order, session=conn)
     return order_id
 
 
@@ -166,6 +170,7 @@ def _record_trade(
     spot: float,
     fut: float,
     repo_settlement: RepoSettlement | None = None,
+    session: Session | None = None,
 ) -> float:
     global _daily_loss
 
@@ -185,7 +190,7 @@ def _record_trade(
         _daily_loss += loss
         METRICS.daily_loss.set(_daily_loss)
 
-    with get_connection() as conn:
+    if session:
         save_trade(
             qty_mwh=qty,
             spot_price=spot,
@@ -195,8 +200,22 @@ def _record_trade(
             repo_cash_token=repo_settlement.cash_token if repo_settlement else None,
             repo_asset_token=repo_settlement.asset_token if repo_settlement else None,
             repo_timestamp=repo_settlement.timestamp if repo_settlement else None,
-            session=conn,
+            session=session,
+            commit=False,
         )
+    else:
+        with get_connection() as conn:
+            save_trade(
+                qty_mwh=qty,
+                spot_price=spot,
+                fut_price=fut,
+                profit=profit,
+                repo_tx_hash=repo_settlement.tx_hash if repo_settlement else None,
+                repo_cash_token=repo_settlement.cash_token if repo_settlement else None,
+                repo_asset_token=repo_settlement.asset_token if repo_settlement else None,
+                repo_timestamp=repo_settlement.timestamp if repo_settlement else None,
+                session=conn,
+            )
 
     return profit
 
@@ -339,9 +358,34 @@ def run_cycle() -> bool:
                 if not _check_notional(fill_a):
                     raise RepoSettlementError("Notional limit exceeded")
 
-                _persist_buy_order(fill_a, qty)
-                fill_b = FUTURES.sell(qty)
-                _record_trade(fill_a, fill_b, qty, spot, fut, settlement)
+                try:
+                    fill_b = FUTURES.sell(qty)
+                except Exception as exc:
+                    METRICS.trade_partial_failures.inc()
+                    logger.exception(
+                        "Futures leg failed after flash-loan power buy; cancelling order",
+                        exc_info=exc,
+                    )
+                    with transactional_session() as tx:
+                        _persist_buy_order(
+                            fill_a, qty, session=tx, status="CANCELLED"
+                        )
+                    raise RepoSettlementError("Futures hedging failed") from exc
+
+                try:
+                    with transactional_session() as tx:
+                        _persist_buy_order(fill_a, qty, session=tx)
+                        _record_trade(
+                            fill_a, fill_b, qty, spot, fut, settlement, session=tx
+                        )
+                except Exception as exc:
+                    METRICS.trade_partial_failures.inc()
+                    logger.exception(
+                        "Failed to persist flash-loan repo trade atomically; rolling back",
+                        exc_info=exc,
+                    )
+                    raise RepoSettlementError("Persistence failure") from exc
+
                 return True
         except RepoSettlementError as exc:
             METRICS.trades_blocked.inc()
@@ -358,14 +402,33 @@ def run_cycle() -> bool:
             if not _check_notional(fill_a):
                 return False
 
-            _persist_buy_order(fill_a, qty)
+            try:
+                fill_b = FUTURES.sell(qty)
+            except Exception as exc:
+                METRICS.trade_partial_failures.inc()
+                logger.exception(
+                    "Futures leg failed after flash-loan power buy; cancelling order",
+                    exc_info=exc,
+                )
+                with transactional_session() as tx:
+                    _persist_buy_order(fill_a, qty, session=tx, status="CANCELLED")
+                return False
+
+            try:
+                with transactional_session() as tx:
+                    _persist_buy_order(fill_a, qty, session=tx)
+                    profit = _record_trade(fill_a, fill_b, qty, spot, fut, session=tx)
+            except Exception as exc:
+                METRICS.trade_partial_failures.inc()
+                logger.exception(
+                    "Failed to persist flash-loan trade atomically; rolling back",
+                    exc_info=exc,
+                )
+                return False
 
             wallet["gbp"] += fill_a.qty_mwh * fill_a.price
-
-            fill_b = FUTURES.sell(qty)
             wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
-            profit = _record_trade(fill_a, fill_b, qty, spot, fut)
             wallet["gbp"] = settings.loan_limit_gbp + profit
 
             return True
