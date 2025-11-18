@@ -7,9 +7,9 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import AnyUrl, Field, PositiveFloat, conint, model_validator
+from pydantic import AnyUrl, Field, PositiveFloat, conint, field_validator, model_validator
 
 # ── Pydantic v1 ⇆ v2 compatibility ───────────────────────────────────────────
 try:  # pragma: no cover - import shim
@@ -141,6 +141,71 @@ class Settings(BaseSettings):
         None,
         env="API_KEY",
         description="Shared secret required for protected HTTP endpoints",
+    )
+    require_https: bool = Field(
+        True,
+        env="REQUIRE_HTTPS",
+        description="Reject requests that are not flagged as HTTPS by the proxy or server",
+    )
+    forwarded_proto_header: Optional[str] = Field(
+        "x-forwarded-proto",
+        env="FORWARDED_PROTO_HEADER",
+        description="Header to infer original scheme when behind a proxy",
+    )
+    tls_certfile: Optional[Path] = Field(
+        None,
+        env="TLS_CERTFILE",
+        description="Certificate chain to terminate TLS directly in the service",
+    )
+    tls_keyfile: Optional[Path] = Field(
+        None,
+        env="TLS_KEYFILE",
+        description="Private key for TLS termination when not offloaded to a proxy",
+    )
+    tls_client_ca: Optional[Path] = Field(
+        None,
+        env="TLS_CLIENT_CA",
+        description="CA bundle for validating client certificates when doing direct mTLS",
+    )
+    client_cert_subject_header: Optional[str] = Field(
+        None,
+        env="CLIENT_CERT_SUBJECT_HEADER",
+        description="Verified client-certificate subject/CN header exposed by the ingress",
+    )
+    mtls_allowed_subjects: List[str] = Field(
+        default_factory=list,
+        env="MTLS_ALLOWED_SUBJECTS",
+        description="Comma-separated allowlist of client certificate subjects/CNs",
+    )
+    mtls_assigned_roles: List[str] = Field(
+        default_factory=lambda: ["admin"],
+        env="MTLS_ASSIGNED_ROLES",
+        description="Roles automatically granted to mTLS-authenticated callers",
+    )
+    oidc_issuer: Optional[str] = Field(
+        None,
+        env="OIDC_ISSUER",
+        description="Expected OIDC issuer for incoming JWTs",
+    )
+    oidc_audience: Optional[str] = Field(
+        None,
+        env="OIDC_AUDIENCE",
+        description="Expected audience claim for incoming JWTs",
+    )
+    oidc_jwks_url: Optional[AnyUrl] = Field(
+        None,
+        env="OIDC_JWKS_URL",
+        description="JWKS endpoint for validating JWT signatures",
+    )
+    oidc_allowed_algorithms: List[str] = Field(
+        default_factory=lambda: ["RS256"],
+        env="OIDC_ALLOWED_ALGS",
+        description="Comma-separated list of accepted JWT algorithms",
+    )
+    control_plane_roles: List[str] = Field(
+        default_factory=lambda: ["admin"],
+        env="CONTROL_PLANE_ROLES",
+        description="Roles permitted to call /ui/services/* and /ui/tests/run",
     )
 
     # database
@@ -354,6 +419,20 @@ class Settings(BaseSettings):
         100.0, description="Quantity at each depth level (MWh)"
     )
 
+    @field_validator(
+        "mtls_allowed_subjects",
+        "mtls_assigned_roles",
+        "oidc_allowed_algorithms",
+        "control_plane_roles",
+        mode="before",
+    )
+    def _normalise_csv(cls, value):  # type: ignore[no-untyped-def]
+        if value is None or value == "":
+            return value
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
     @model_validator(mode="after")
     def _hydrate_secret_backends(cls, model: "Settings") -> "Settings":
         if not model.secrets_backend:
@@ -480,6 +559,15 @@ class Settings(BaseSettings):
 
         _ = model.database_url
 
+        return model
+
+    @model_validator(mode="after")
+    def _require_identity_provider(cls, model: "Settings") -> "Settings":
+        oidc_configured = bool(model.oidc_issuer and model.oidc_audience)
+        if not (oidc_configured or model.client_cert_subject_header):
+            raise ValueError(
+                "Configure CLIENT_CERT_SUBJECT_HEADER for mTLS or OIDC_ISSUER/OIDC_AUDIENCE for JWT auth"
+            )
         return model
 
     @property

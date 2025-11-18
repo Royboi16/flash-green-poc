@@ -19,6 +19,7 @@ SQLAlchemy>=2.0
 alembic>=1.13
 psycopg2-binary>=2.9
 pymysql>=1.1
+pyjwt[crypto]>=2.10
 
 # --- optional extras (align with poetry extras) ---
 web3>=6.15               # flash-loan / Hardhat integration

@@ -5,7 +5,20 @@ These steps harden the Flash-Green API before exposing it to any operators.
 ## Configure authentication
 
 - **Set `API_KEY`** in the runtime environment before starting the FastAPI service. The API will fail to initialize without it, and a misconfigured deployment returns `503` for all dependency-injected routes. Requests that mutate state (e.g., orchestrator start/stop, test execution) are rejected when the header `X-API-Key` is missing or does not match `API_KEY`.
-- If you use stronger auth (mTLS, OIDC), enforce it at the proxy or ingress layer and keep the API key check enabled as a defense in depth unless you explicitly replace it.
+- **Choose an identity provider**: the API refuses to start unless at least one of the following is configured:
+  - **OIDC/JWT**: set `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`. Tokens must present the configured audience and issuer; roles/scopes in the token are mapped to FastAPI permissions. Override allowed algorithms with `OIDC_ALLOWED_ALGS` if your issuer requires it.
+  - **mTLS**: terminate TLS at the ingress and forward the verified subject/CN with `CLIENT_CERT_SUBJECT_HEADER`. Restrict access using `MTLS_ALLOWED_SUBJECTS` (comma-separated) and grant roles with `MTLS_ASSIGNED_ROLES`.
+- **API key remains in force** as a defense-in-depth control: identity (OIDC or mTLS) is verified before the `X-API-Key` check is evaluated.
+
+## TLS termination and HTTPS enforcement
+
+- Require HTTPS for all callers (`REQUIRE_HTTPS=1`). When running behind a proxy, set `FORWARDED_PROTO_HEADER` to the header that conveys the original scheme (default: `x-forwarded-proto`).
+- Terminate TLS either at the service (`TLS_CERTFILE`, `TLS_KEYFILE`, optional `TLS_CLIENT_CA` for local mTLS) or at an ingress/gateway. If TLS is offloaded, ensure the ingress passes the client certificate subject header for mTLS enforcement and blocks plaintext traffic.
+ 
+## Scope control-plane access
+
+- Control-plane routes (`/ui/services/*`, `/ui/tests/run`) are restricted to principals whose roles intersect `CONTROL_PLANE_ROLES` (default `admin`). Use `MTLS_ASSIGNED_ROLES` or OIDC role/scopes to grant access to operators.
+- Audit logs now include structured principal metadata (subject, roles, auth_method, client address) for each control-plane action.
 
 ## Service startup checklist
 
