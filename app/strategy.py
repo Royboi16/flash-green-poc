@@ -150,5 +150,5 @@ def select_route(quotes: QuoteSnapshot) -> TradePlan:
         logger.debug("Zero position after risk caps; skipping")
         return TradePlan(False, 0.0, spread, 0.0, cycle, None)
 
-    expected_profit = qty * (sell_price * loan_multiplier + buy_price)
+    expected_profit = qty * profit_per_mwh
     return TradePlan(True, qty, profit_per_mwh, expected_profit, list(cycle), None)
