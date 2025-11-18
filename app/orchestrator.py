@@ -130,7 +130,7 @@ def _record_trade(
 ) -> float:
     global _daily_loss
 
-    profit = fill_a.qty_mwh * fill_a.price + fill_b.qty_mwh * fill_b.price
+    profit = fill_b.qty_mwh * fill_b.price - fill_a.qty_mwh * fill_a.price
 
     if profit >= 0:
         METRICS.profit_positive.inc(profit)

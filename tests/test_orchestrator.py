@@ -121,7 +121,9 @@ def test_run_cycle_records_trade(monkeypatch):
         )
     )
     expected_qty = plan.qty_mwh
-    expected_profit = plan.expected_profit
+    expected_profit = plan.qty_mwh * (futures.quote_price - power.quote_price)
+
+    assert plan.expected_profit == pytest.approx(expected_profit)
 
     trade = trades[0]
     assert trade["qty_mwh"] == pytest.approx(expected_qty)
@@ -132,6 +134,29 @@ def test_run_cycle_records_trade(monkeypatch):
     assert totals["net"] == pytest.approx(expected_profit)
     assert orchestrator.METRICS.profit_positive.value == pytest.approx(expected_profit)
     assert orchestrator.METRICS.daily_loss.value == 0
+
+
+@pytest.mark.usefixtures("metrics")
+def test_record_trade_negative_spread():
+    fill_a = Fill(qty_mwh=5.0, price=50.0)
+    fill_b = Fill(qty_mwh=5.0, price=10.0)
+
+    profit = orchestrator._record_trade(
+        fill_a,
+        fill_b,
+        qty=5.0,
+        spot=fill_a.price,
+        fut=fill_b.price,
+    )
+
+    trades = storage.get_trades()
+    assert len(trades) == 1
+    assert trades[0]["profit"] == pytest.approx(profit)
+
+    assert profit == pytest.approx(-200.0)
+    assert orchestrator.METRICS.profit_negative.value == pytest.approx(200.0)
+    assert orchestrator._daily_loss == pytest.approx(200.0)
+    assert orchestrator.METRICS.daily_loss.value == pytest.approx(200.0)
 
 
 @pytest.mark.usefixtures("metrics")
