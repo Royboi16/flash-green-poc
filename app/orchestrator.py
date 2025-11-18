@@ -20,7 +20,7 @@ from app.storage import (
     save_trade,
     update_order,
 )
-from app.strategy import should_trade
+from app.strategy import QuoteSnapshot, TradePlan, select_route
 
 # --- choose PowerExchange implementation ------------------------------------
 if settings.use_powerledger_live:
@@ -233,21 +233,38 @@ def run_cycle() -> bool:
     fut = FUTURES.quote()
     logger.debug("TICK:   spot=%r, fut=%r, spread=%r", spot, fut, fut - spot)
 
-    trade, qty, spread = should_trade(spot, fut)
-    METRICS.spread.set(spread)
-    logger.debug(" SIGNAL: trade=%r, qty=%r, spread=%r", trade, qty, spread)
-
+    plan: TradePlan = select_route(
+        QuoteSnapshot(
+            spot_price=spot,
+            futures_price=fut,
+            slippage_bp=settings.slippage_bp,
+        )
+    )
+    METRICS.spread.set(plan.spread)
     logger.debug(
-        "DEBUG tick: spot=%s, fut=%s, spread=%s, trade=%s, qty=%s",
-        spot,
-        fut,
-        spread,
-        trade,
-        qty,
+        " SIGNAL: trade=%r, qty=%r, spread=%r, path=%s",
+        plan.execute,
+        plan.qty_mwh,
+        plan.spread,
+        plan.path,
     )
 
-    if not trade:
+    logger.debug(
+        "DEBUG tick: spot=%s, fut=%s, spread=%s, trade=%s, qty=%s, path=%s",
+        spot,
+        fut,
+        plan.spread,
+        plan.execute,
+        plan.qty_mwh,
+        plan.path,
+    )
+
+    if not plan.execute:
+        if plan.block_reason:
+            METRICS.trades_blocked.inc()
         return False
+
+    qty = plan.qty_mwh
 
     notional = qty * spot
     if notional > settings.max_notional_per_trade:
