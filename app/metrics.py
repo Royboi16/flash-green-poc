@@ -40,6 +40,10 @@ METRICS.flash_repo_rollbacks = Counter(
     "flash_repo_rollbacks_total",
     "Rollbacks triggered after repo commit failures",
 )
+METRICS.trade_partial_failures = Counter(
+    "trade_partial_failures_total",
+    "Cases where one leg succeeded but persistence or hedging failed",
+)
 
 # Phase 4: risk & limits
 METRICS.daily_loss = Gauge(
