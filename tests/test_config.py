@@ -49,6 +49,11 @@ def test_fnality_repo_adapter_requires_credentials():
         )
 
 
+def test_loan_limit_caps_notional():
+    with pytest.raises(ValueError, match="LOAN_LIMIT_GBP"):
+        _settings(max_notional_per_trade=200_000, loan_limit_gbp=100_000)
+
+
 def test_web3_loan_requires_credentials():
     with pytest.raises(ValueError, match="USE_WEB3_LOAN=1"):
         _settings(
