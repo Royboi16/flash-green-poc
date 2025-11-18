@@ -126,8 +126,8 @@ Configuration regressions are caught via `pytest -k config`, which instantiates
 2. Set `FLASH_LOAN_CONTRACT` (deployed flash-loan contract),
    `FLASH_LOAN_RECEIVER` (TestReceiver or production receiver), and `LENDER_KEY`
    (custodied signing key with access to the CBDC settlement account).
-3. Allocate sufficient CBDC float to the lender wallet to cover
-   `LOAN_LIMIT_GBP` (default £100k) plus gas.
+3. Allocate sufficient CBDC float to the lender wallet to cover the
+   `LOAN_LIMIT_GBP` setting (default £100k) plus gas.
 4. When the orchestrator executes, the power-leg order is paired with the
    futures-leg exit and the CBDC loan in a single cycle. Failed CBDC settlement
    triggers the existing `trades_blocked` Prometheus counter and logs a

@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     max_daily_loss_gbp: float = Field(
         500.0, description="Stop trading after this daily loss (£)"
     )
+    loan_limit_gbp: PositiveFloat = Field(
+        100_000, env="LOAN_LIMIT_GBP", description="Flash-loan wallet float (£)"
+    )
     trading_window_utc: str = Field(
         "05:00-21:00",
         env="TRADING_WINDOW_UTC",
@@ -452,6 +455,9 @@ class Settings(BaseSettings):
                     raise ValueError
         except ValueError:
             raise ValueError("TRADING_WINDOW_UTC must be HH:MM-HH:MM using 24h clock")
+
+        if model.max_notional_per_trade > model.loan_limit_gbp:
+            raise ValueError("MAX_NOTIONAL_PER_TRADE cannot exceed LOAN_LIMIT_GBP")
 
         return model
 

@@ -101,9 +101,6 @@ def _settle_open_orders(
         update_order(order.id, filled, avg_price, status, conn=conn)
 
 
-LOAN_LIMIT_GBP = 100_000
-
-
 def _persist_buy_order(fill_a, qty: float) -> str:
     order_id = fill_a.order_id or f"sim-{datetime.utcnow().isoformat()}"
     with get_connection() as conn:
@@ -263,7 +260,7 @@ def run_cycle() -> bool:
 
         try:
             with repo_adapter.transactional_repo(
-                cash_amount_wei=int(LOAN_LIMIT_GBP * 10**18)
+                cash_amount_wei=int(settings.loan_limit_gbp * 10**18)
             ):
                 fill_a = POWER.buy(qty, max_price=spot)
                 if not _check_notional(fill_a):
@@ -278,7 +275,7 @@ def run_cycle() -> bool:
             logger.warning("Flash-loan repo trade aborted: %s", exc)
             return False
 
-    with FlashLoanAdapter(limit_gbp=LOAN_LIMIT_GBP) as wallet:
+    with FlashLoanAdapter(limit_gbp=settings.loan_limit_gbp) as wallet:
         try:
             try:
                 fill_a = POWER.buy(qty, max_price=spot)
@@ -296,7 +293,7 @@ def run_cycle() -> bool:
             wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
             profit = _record_trade(fill_a, fill_b, qty, spot, fut)
-            wallet["gbp"] = LOAN_LIMIT_GBP + profit
+            wallet["gbp"] = settings.loan_limit_gbp + profit
 
             return True
 
