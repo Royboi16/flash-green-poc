@@ -38,6 +38,8 @@ SECRET_FIELD_MAP: Dict[str, str] = {
     "receiver_address": "FLASH_LOAN_RECEIVER",
     "lender_private_key": "LENDER_KEY",
     "api_key": "API_KEY",
+    "db_user": "DB_USER",
+    "db_password": "DB_PASSWORD",
 }
 
 
@@ -140,6 +142,23 @@ class Settings(BaseSettings):
         env="API_KEY",
         description="Shared secret required for protected HTTP endpoints",
     )
+
+    # database
+    db_url: Optional[str] = Field(
+        None,
+        env="DATABASE_URL",
+        description="SQLAlchemy database URL; overrides DB_* fields when set",
+    )
+    db_driver: Literal["postgresql", "mysql"] = Field(
+        "postgresql",
+        env="DB_DRIVER",
+        description="SQLAlchemy dialect for the managed database",
+    )
+    db_host: str = Field("localhost", env="DB_HOST", description="Database host")
+    db_port: Optional[int] = Field(None, env="DB_PORT", description="Database port")
+    db_name: str = Field("flash_green", env="DB_NAME", description="Database name")
+    db_user: str = Field("flashgreen", env="DB_USER", description="Database user")
+    db_password: str = Field("flashgreen", env="DB_PASSWORD", description="Database password")
 
     # externals (placeholders)
     bmrs_api_key: Optional[str] = None
@@ -459,7 +478,23 @@ class Settings(BaseSettings):
         if model.max_notional_per_trade > model.loan_limit_gbp:
             raise ValueError("MAX_NOTIONAL_PER_TRADE cannot exceed LOAN_LIMIT_GBP")
 
+        _ = model.database_url
+
         return model
+
+    @property
+    def database_url(self) -> str:
+        if self.db_url:
+            return self.db_url
+
+        port = self.db_port
+        if port is None:
+            port = 5432 if self.db_driver == "postgresql" else 3306
+        driver = "psycopg2" if self.db_driver == "postgresql" else "pymysql"
+        return (
+            f"{self.db_driver}+{driver}://"
+            f"{self.db_user}:{self.db_password}@{self.db_host}:{port}/{self.db_name}"
+        )
 
     @model_validator(mode="after")
     def _require_api_key(cls, model: "Settings") -> "Settings":

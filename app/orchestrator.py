@@ -4,9 +4,10 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
-import sqlite3
 from datetime import date, datetime, time, timezone
 from time import sleep
+
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.logger import logger
@@ -84,7 +85,7 @@ _daily_loss: float = 0.0
 
 
 def _settle_open_orders(
-    power_exchange: PowerExchange, conn: sqlite3.Connection
+    power_exchange: PowerExchange, conn: Session
 ) -> None:
     for order in get_open_orders(conn=conn):
         data = power_exchange._fetch_order(order.id)
@@ -115,7 +116,7 @@ def _persist_buy_order(fill_a, qty: float) -> str:
                 avg_price=fill_a.price,
                 status="PENDING",
             ),
-            conn=conn,
+            session=conn,
         )
     return order_id
 
@@ -136,6 +137,12 @@ def _record_trade(
         METRICS.profit_positive.inc(profit)
     else:
         loss = -profit
+        if fill_a.price < 0 or fill_b.price < 0:
+            loss = max(
+                loss,
+                abs(fill_a.qty_mwh * fill_a.price)
+                + abs(fill_b.qty_mwh * fill_b.price),
+            )
         METRICS.profit_negative.inc(loss)
         _daily_loss += loss
         METRICS.daily_loss.set(_daily_loss)
@@ -150,7 +157,7 @@ def _record_trade(
             repo_cash_token=repo_settlement.cash_token if repo_settlement else None,
             repo_asset_token=repo_settlement.asset_token if repo_settlement else None,
             repo_timestamp=repo_settlement.timestamp if repo_settlement else None,
-            conn=conn,
+            session=conn,
         )
 
     return profit

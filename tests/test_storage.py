@@ -1,113 +1,75 @@
-import sqlite3
+from datetime import datetime
 
+import app.db as db
 import app.storage as storage
+from sqlalchemy import select
 
 
-def _temp_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            qty_mwh REAL,
-            spot_price REAL,
-            fut_price REAL,
-            profit REAL,
-            timestamp TEXT,
-            repo_tx_hash TEXT,
-            repo_cash_token TEXT,
-            repo_asset_token TEXT,
-            repo_timestamp TEXT
-        );
-        CREATE TABLE orders (
-            id TEXT PRIMARY KEY,
-            symbol TEXT,
-            side TEXT,
-            qty_requested REAL,
-            qty_filled REAL,
-            avg_price REAL,
-            status TEXT,
-            timestamp TEXT
-        );
-        """
-    )
-    return conn
+def _setup_db():
+    engine = db.override_engine("sqlite:///:memory:")
+    storage.Base.metadata.create_all(engine)
+    return engine
 
 
-def test_save_and_load(monkeypatch):
-    test_conn = _temp_conn()
-    monkeypatch.setattr(storage, "_conn", test_conn)
-    storage.save_trade(
-        qty_mwh=1.5,
-        spot_price=-5.0,
-        fut_price=65.0,
-        profit=100.0,
-    )
-    profits = [row["profit"] for row in test_conn.execute("SELECT profit FROM trades").fetchall()]
-    assert profits == [100.0]
-    trades = storage.get_trades()
-    assert len(trades) == 1
-    assert trades[0]["profit"] == 100.0
-
-
-def test_get_trades_orders_by_recency(monkeypatch):
-    conn = _temp_conn()
-    monkeypatch.setattr(storage, "_conn", conn)
-    with conn:
-        conn.executemany(
-            """
-            INSERT INTO trades (
-                qty_mwh,
-                spot_price,
-                fut_price,
-                profit,
-                timestamp,
-                repo_tx_hash,
-                repo_cash_token,
-                repo_asset_token,
-                repo_timestamp
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    1.0,
-                    10.0,
-                    20.0,
-                    5.0,
-                    "2024-01-01T00:00:00",
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-                (
-                    1.1,
-                    11.0,
-                    21.0,
-                    6.0,
-                    "2024-01-02T00:00:00",
-                    "tx-2",
-                    "CASH",
-                    "ASSET",
-                    "2024-01-02T00:00:01",
-                ),
-                (
-                    1.2,
-                    12.0,
-                    22.0,
-                    7.0,
-                    "2024-01-02T00:00:00",
-                    "tx-3",
-                    "CASH",
-                    "ASSET",
-                    "2024-01-02T00:00:02",
-                ),
-            ],
+def test_save_and_load():
+    _setup_db()
+    with db.SessionLocal() as session:
+        storage.save_trade(
+            qty_mwh=1.5,
+            spot_price=-5.0,
+            fut_price=65.0,
+            profit=100.0,
+            session=session,
         )
+        profits = [
+            row
+            for row in session.execute(select(storage.Trade.profit)).scalars().all()
+        ]
+        assert profits == [100.0]
+        trades = storage.get_trades(session=session)
+        assert len(trades) == 1
+        assert trades[0]["profit"] == 100.0
 
-    trades = storage.get_trades(limit=2)
+
+def test_get_trades_orders_by_recency():
+    _setup_db()
+    with db.SessionLocal() as session:
+        session.add_all(
+            [
+                storage.Trade(
+                    qty_mwh=1.0,
+                    spot_price=10.0,
+                    fut_price=20.0,
+                    profit=5.0,
+                    timestamp=datetime.fromisoformat("2024-01-01T00:00:00"),
+                ),
+                storage.Trade(
+                    qty_mwh=1.1,
+                    spot_price=11.0,
+                    fut_price=21.0,
+                    profit=6.0,
+                    timestamp=datetime.fromisoformat("2024-01-02T00:00:00"),
+                    repo_tx_hash="tx-2",
+                    repo_cash_token="CASH",
+                    repo_asset_token="ASSET",
+                    repo_timestamp=datetime.fromisoformat("2024-01-02T00:00:01"),
+                ),
+                storage.Trade(
+                    qty_mwh=1.2,
+                    spot_price=12.0,
+                    fut_price=22.0,
+                    profit=7.0,
+                    timestamp=datetime.fromisoformat("2024-01-02T00:00:00"),
+                    repo_tx_hash="tx-3",
+                    repo_cash_token="CASH",
+                    repo_asset_token="ASSET",
+                    repo_timestamp=datetime.fromisoformat("2024-01-02T00:00:02"),
+                ),
+            ]
+        )
+        session.commit()
+
+        trades = storage.get_trades(limit=2, session=session)
 
     assert [t["id"] for t in trades] == [3, 2]
     assert trades[0]["timestamp"] == "2024-01-02T00:00:00"
@@ -117,9 +79,8 @@ def test_get_trades_orders_by_recency(monkeypatch):
     assert trades[0]["repo_timestamp"] == "2024-01-02T00:00:02"
 
 
-def test_orders_use_shared_connection(monkeypatch):
-    conn = _temp_conn()
-    monkeypatch.setattr(storage, "_conn", conn)
+def test_orders_use_shared_connection():
+    _setup_db()
     open_order = storage.Order(
         id="o-1",
         symbol="SYM",
@@ -128,7 +89,7 @@ def test_orders_use_shared_connection(monkeypatch):
         qty_filled=0.0,
         avg_price=0.0,
         status="NEW",
-        timestamp="2024-01-01T00:00:00",
+        timestamp=datetime.fromisoformat("2024-01-01T00:00:00"),
     )
     filled_order = storage.Order(
         id="o-2",
@@ -138,16 +99,21 @@ def test_orders_use_shared_connection(monkeypatch):
         qty_filled=5.0,
         avg_price=25.0,
         status="FILLED",
-        timestamp="2024-01-01T01:00:00",
+        timestamp=datetime.fromisoformat("2024-01-01T01:00:00"),
     )
 
-    storage.save_order(open_order)
-    storage.save_order(filled_order)
+    with db.SessionLocal() as session:
+        storage.save_order(open_order, session=session)
+        storage.save_order(filled_order, session=session)
 
-    remaining = storage.get_open_orders()
+        remaining = storage.get_open_orders(session=session)
 
-    assert remaining == [open_order]
-    assert [row["status"] for row in conn.execute("SELECT status FROM orders ORDER BY id")] == [
-        "NEW",
-        "FILLED",
-    ]
+        assert remaining == [open_order]
+
+        statuses = [
+            row
+            for row in session.execute(
+                select(storage.OrderRecord.status).order_by(storage.OrderRecord.id)
+            ).scalars()
+        ]
+        assert list(statuses) == ["NEW", "FILLED"]

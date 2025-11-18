@@ -1,116 +1,61 @@
 # app/storage.py
 
+from __future__ import annotations
+
 from contextlib import contextmanager
-import sqlite3
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Iterator
+from typing import Any, Dict, Iterator, List, NamedTuple
 
-# ─── Database setup ──────────────────────────────────────────────────────────
+from sqlalchemy import Column, DateTime, Float, Integer, String, case, func, select, update
+from sqlalchemy.orm import Session
 
-_DB_PATH = Path("data") / "flash_green.db"
-_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _configure_connection(conn: sqlite3.Connection) -> None:
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-
-
-def _create_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False, isolation_level=None)
-    _configure_connection(conn)
-    return conn
-
-
-_conn: sqlite3.Connection | None = None
-
-
-@contextmanager
-def get_connection() -> Iterator[sqlite3.Connection]:
-    conn = _create_connection()
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-@contextmanager
-def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    try:
-        conn.execute("BEGIN")
-        yield conn
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-
-
-def _ensure_conn(conn: sqlite3.Connection | None) -> tuple[sqlite3.Connection, bool]:
-    if _conn is not None and conn is None:
-        return _conn, False
-    if conn is not None:
-        return conn, False
-    return _create_connection(), True
-
-
-def _close_if_owned(conn: sqlite3.Connection, owns: bool) -> None:
-    if owns:
-        conn.close()
-
-
-def _init_schema() -> None:
-    with get_connection() as conn:
-        with transaction(conn):
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    qty_mwh    REAL,
-                    spot_price REAL,
-                    fut_price  REAL,
-                    profit     REAL,
-                    timestamp  TEXT,
-                    repo_tx_hash TEXT,
-                    repo_cash_token TEXT,
-                    repo_asset_token TEXT,
-                    repo_timestamp TEXT
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS orders (
-                    id            TEXT PRIMARY KEY,
-                    symbol        TEXT,
-                    side          TEXT,
-                    qty_requested REAL,
-                    qty_filled    REAL,
-                    avg_price     REAL,
-                    status        TEXT,
-                    timestamp     TEXT
-                )
-                """
-            )
-
-            existing_cols = {
-                row["name"] for row in conn.execute("PRAGMA table_info(trades)")
-            }
-            if "repo_tx_hash" not in existing_cols:
-                conn.execute("ALTER TABLE trades ADD COLUMN repo_tx_hash TEXT")
-            if "repo_cash_token" not in existing_cols:
-                conn.execute("ALTER TABLE trades ADD COLUMN repo_cash_token TEXT")
-            if "repo_asset_token" not in existing_cols:
-                conn.execute("ALTER TABLE trades ADD COLUMN repo_asset_token TEXT")
-            if "repo_timestamp" not in existing_cols:
-                conn.execute("ALTER TABLE trades ADD COLUMN repo_timestamp TEXT")
-
-
-_init_schema()
-
+from app.db import Base, SessionLocal, get_session
 
 # ─── Models ──────────────────────────────────────────────────────────────────
+
+
+class Trade(Base):
+    __tablename__ = "trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    qty_mwh = Column(Float, nullable=False)
+    spot_price = Column(Float, nullable=False)
+    fut_price = Column(Float, nullable=False)
+    profit = Column(Float, nullable=False)
+    timestamp = Column(DateTime(timezone=False), index=True, nullable=False)
+    repo_tx_hash = Column(String, nullable=True)
+    repo_cash_token = Column(String, nullable=True)
+    repo_asset_token = Column(String, nullable=True)
+    repo_timestamp = Column(DateTime(timezone=False), nullable=True)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "qty_mwh": self.qty_mwh,
+            "spot_price": self.spot_price,
+            "fut_price": self.fut_price,
+            "profit": self.profit,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "repo_tx_hash": self.repo_tx_hash,
+            "repo_cash_token": self.repo_cash_token,
+            "repo_asset_token": self.repo_asset_token,
+            "repo_timestamp": self.repo_timestamp.isoformat()
+            if self.repo_timestamp
+            else None,
+        }
+
+
+class OrderRecord(Base):
+    __tablename__ = "orders"
+
+    id = Column(String, primary_key=True)
+    symbol = Column(String, nullable=False)
+    side = Column(String, nullable=False)
+    qty_requested = Column(Float, nullable=False)
+    qty_filled = Column(Float, nullable=False)
+    avg_price = Column(Float, nullable=False)
+    status = Column(String, nullable=False)
+    timestamp = Column(DateTime(timezone=False), nullable=False)
 
 
 class Order(NamedTuple):
@@ -121,7 +66,30 @@ class Order(NamedTuple):
     qty_filled: float
     avg_price: float
     status: str
-    timestamp: str
+    timestamp: datetime
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _coerce_datetime(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+
+def _ensure_session(session: Session | None = None, conn: Session | None = None) -> tuple[Session, bool]:
+    selected = session or conn
+    if selected is not None:
+        return selected, False
+    return SessionLocal(), True
+
+
+def _close_session(session: Session, owns: bool) -> None:
+    if owns:
+        session.close()
 
 
 # ─── Trade persistence ───────────────────────────────────────────────────────
@@ -135,151 +103,134 @@ def save_trade(
     repo_tx_hash: str | None = None,
     repo_cash_token: str | None = None,
     repo_asset_token: str | None = None,
-    repo_timestamp: str | None = None,
-    conn: sqlite3.Connection | None = None,
+    repo_timestamp: str | datetime | None = None,
+    session: Session | None = None,
+    conn: Session | None = None,
 ) -> None:
     """Persist a completed trade (used by your PoC)."""
-    ts = datetime.utcnow().isoformat()
-    connection, owns_conn = _ensure_conn(conn)
+
+    trade_ts = datetime.utcnow()
+    repo_ts = _coerce_datetime(repo_timestamp)
+    db_session, owns_session = _ensure_session(session, conn)
     try:
-        with transaction(connection):
-            connection.execute(
-                """
-                INSERT INTO trades
-                    (
-                        qty_mwh,
-                        spot_price,
-                        fut_price,
-                        profit,
-                        timestamp,
-                        repo_tx_hash,
-                        repo_cash_token,
-                        repo_asset_token,
-                        repo_timestamp
-                    )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    qty_mwh,
-                    spot_price,
-                    fut_price,
-                    profit,
-                    ts,
-                    repo_tx_hash,
-                    repo_cash_token,
-                    repo_asset_token,
-                    repo_timestamp,
-                ),
+        db_session.add(
+            Trade(
+                qty_mwh=qty_mwh,
+                spot_price=spot_price,
+                fut_price=fut_price,
+                profit=profit,
+                timestamp=trade_ts,
+                repo_tx_hash=repo_tx_hash,
+                repo_cash_token=repo_cash_token,
+                repo_asset_token=repo_asset_token,
+                repo_timestamp=repo_ts,
             )
+        )
+        db_session.commit()
     finally:
-        _close_if_owned(connection, owns_conn)
+        _close_session(db_session, owns_session)
 
 
-def get_trades(limit: int | None = None, conn: sqlite3.Connection | None = None) -> List[Dict[str, Any]]:
+def get_trades(
+    limit: int | None = None,
+    session: Session | None = None,
+    conn: Session | None = None,
+) -> List[Dict[str, Any]]:
     """Fetch past trades for your PnL API ordered by recency."""
-    sql = """
-        SELECT
-            id,
-            qty_mwh,
-            spot_price,
-            fut_price,
-            profit,
-            timestamp,
-            repo_tx_hash,
-            repo_cash_token,
-            repo_asset_token,
-            repo_timestamp
-          FROM trades
-         ORDER BY timestamp DESC, id DESC
-    """
-    params: tuple[Any, ...] = ()
-    if limit is not None:
-        sql += " LIMIT ?"
-        params = (limit,)
 
-    connection, owns_conn = _ensure_conn(conn)
+    db_session, owns_session = _ensure_session(session, conn)
     try:
-        cur = connection.execute(sql, params)
-        return [dict(row) for row in cur.fetchall()]
+        stmt = select(Trade).order_by(Trade.timestamp.desc(), Trade.id.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        trades = db_session.scalars(stmt).all()
+        return [trade.as_dict() for trade in trades]
     finally:
-        _close_if_owned(connection, owns_conn)
+        _close_session(db_session, owns_session)
 
 
-def get_pnl_totals(conn: sqlite3.Connection | None = None) -> Dict[str, float]:
+def get_pnl_totals(session: Session | None = None, conn: Session | None = None) -> Dict[str, float]:
     """Aggregate net, positive, and negative PnL from stored trades."""
-    connection, owns_conn = _ensure_conn(conn)
+
+    db_session, owns_session = _ensure_session(session, conn)
     try:
-        row = connection.execute(
-            """
-            SELECT
-                COALESCE(SUM(CASE WHEN profit >= 0 THEN profit ELSE 0 END), 0) AS positive,
-                COALESCE(SUM(CASE WHEN profit < 0 THEN -profit ELSE 0 END), 0) AS negative,
-                COALESCE(SUM(profit), 0) AS net
-            FROM trades
-            """
-        ).fetchone()
+        stmt = select(
+            func.coalesce(
+                func.sum(case((Trade.profit >= 0, Trade.profit), else_=0)), 0
+            ).label("positive"),
+            func.coalesce(
+                func.sum(case((Trade.profit < 0, -Trade.profit), else_=0)), 0
+            ).label("negative"),
+            func.coalesce(func.sum(Trade.profit), 0).label("net"),
+        )
+        row = db_session.execute(stmt).one()
         return {
-            "positive": float(row["positive"]),
-            "negative": float(row["negative"]),
-            "net": float(row["net"]),
+            "positive": float(row.positive),
+            "negative": float(row.negative),
+            "net": float(row.net),
         }
     finally:
-        _close_if_owned(connection, owns_conn)
+        _close_session(db_session, owns_session)
 
 
 # ─── Order‐tracking / idempotency ────────────────────────────────────────────
 
 
-def save_order(order: Order, conn: sqlite3.Connection | None = None) -> None:
+def save_order(
+    order: Order,
+    session: Session | None = None,
+    conn: Session | None = None,
+) -> None:
     """Insert or replace an in‐flight ICE order."""
-    connection, owns_conn = _ensure_conn(conn)
+
+    db_session, owns_session = _ensure_session(session, conn)
     try:
-        with transaction(connection):
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO orders (
-                    id, symbol, side, qty_requested,
-                    qty_filled, avg_price, status, timestamp
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    order.id,
-                    order.symbol,
-                    order.side,
-                    order.qty_requested,
-                    order.qty_filled,
-                    order.avg_price,
-                    order.status,
-                    order.timestamp,
-                ),
+        db_session.merge(
+            OrderRecord(
+                id=order.id,
+                symbol=order.symbol,
+                side=order.side,
+                qty_requested=order.qty_requested,
+                qty_filled=order.qty_filled,
+                avg_price=order.avg_price,
+                status=order.status,
+                timestamp=_coerce_datetime(order.timestamp) or datetime.utcnow(),
             )
-    finally:
-        _close_if_owned(connection, owns_conn)
-
-
-def get_open_orders(conn: sqlite3.Connection | None = None) -> List[Order]:
-    """Return all orders not yet FILLED/CANCELLED/REJECTED."""
-    connection, owns_conn = _ensure_conn(conn)
-    try:
-        cur = connection.execute(
-            """
-            SELECT
-                id,
-                symbol,
-                side,
-                qty_requested,
-                qty_filled,
-                avg_price,
-                status,
-                timestamp
-              FROM orders
-             WHERE status NOT IN ('FILLED','CANCELLED','REJECTED')
-            """
         )
-        return [Order(**row) for row in cur.fetchall()]
+        db_session.commit()
     finally:
-        _close_if_owned(connection, owns_conn)
+        _close_session(db_session, owns_session)
+
+
+def get_open_orders(
+    session: Session | None = None,
+    conn: Session | None = None,
+) -> List[Order]:
+    """Return all orders not yet FILLED/CANCELLED/REJECTED."""
+
+    db_session, owns_session = _ensure_session(session, conn)
+    try:
+        stmt = select(OrderRecord).where(
+            OrderRecord.status.notin_(
+                ["FILLED", "CANCELLED", "REJECTED"]
+            )
+        )
+        orders = db_session.scalars(stmt).all()
+        return [
+            Order(
+                id=order.id,
+                symbol=order.symbol,
+                side=order.side,
+                qty_requested=order.qty_requested,
+                qty_filled=order.qty_filled,
+                avg_price=order.avg_price,
+                status=order.status,
+                timestamp=order.timestamp,
+            )
+            for order in orders
+        ]
+    finally:
+        _close_session(db_session, owns_session)
 
 
 def update_order(
@@ -287,28 +238,36 @@ def update_order(
     filled: float,
     avg_price: float,
     status: str,
-    conn: sqlite3.Connection | None = None,
+    session: Session | None = None,
+    conn: Session | None = None,
 ) -> None:
     """Update status/filled/price for an existing order."""
-    connection, owns_conn = _ensure_conn(conn)
+
+    db_session, owns_session = _ensure_session(session, conn)
     try:
-        with transaction(connection):
-            connection.execute(
-                """
-                UPDATE orders
-                   SET qty_filled=?, avg_price=?, status=?
-                 WHERE id=?
-                """,
-                (filled, avg_price, status, order_id),
-            )
+        stmt = (
+            update(OrderRecord)
+            .where(OrderRecord.id == order_id)
+            .values(qty_filled=filled, avg_price=avg_price, status=status)
+        )
+        db_session.execute(stmt)
+        db_session.commit()
     finally:
-        _close_if_owned(connection, owns_conn)
+        _close_session(db_session, owns_session)
 
 
 # ─── FastAPI dependency helper ───────────────────────────────────────────────
 
 
-def connection_dependency() -> Iterator[sqlite3.Connection]:
-    """Yield a configured connection for FastAPI dependencies."""
-    with get_connection() as conn:
-        yield conn
+def connection_dependency() -> Iterator[Session]:
+    """Yield a configured session for FastAPI dependencies."""
+
+    with get_session() as session:
+        yield session
+
+# Keep backward-compatible alias
+@contextmanager
+def get_connection() -> Iterator[Session]:
+    with get_session() as session:
+        yield session
+

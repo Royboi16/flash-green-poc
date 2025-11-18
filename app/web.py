@@ -8,13 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import sqlite3
-
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 import requests
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.logger import logger
@@ -212,9 +213,9 @@ def _orchestrator_status() -> Dict[str, object]:
     }
 
 
-def _check_database(conn: sqlite3.Connection) -> Dict[str, object]:
+def _check_database(conn: Session) -> Dict[str, object]:
     try:
-        conn.execute("SELECT 1")
+        conn.execute(text("SELECT 1"))
         return {"status": "ok"}
     except Exception as exc:  # pragma: no cover - defensive guard
         logger.error("Database health check failed", exc_info=True)
@@ -327,9 +328,7 @@ def _has_degraded(check: Dict[str, object]) -> bool:
 
 
 @api.get("/healthz")
-async def health(
-    probe: str = "readiness", conn: sqlite3.Connection = Depends(connection_dependency)
-):
+async def health(probe: str = "readiness", conn: Session = Depends(connection_dependency)):
     checks: Dict[str, Dict[str, object]] = {}
 
     checks["database"] = _check_database(conn)
@@ -360,7 +359,7 @@ async def prom():
 
 
 @api.get("/pnl", dependencies=[Depends(require_api_key)])
-async def pnl(conn: sqlite3.Connection = Depends(connection_dependency)):
+async def pnl(conn: Session = Depends(connection_dependency)):
     """Return aggregated profit/loss totals: net, positive, and negative."""
     return get_pnl_totals(conn=conn)
 
@@ -374,7 +373,7 @@ async def ui():
 
 
 @api.get("/trades", response_model=List[TradeOut], dependencies=[Depends(require_api_key)])
-async def trades(limit: int = 100, conn: sqlite3.Connection = Depends(connection_dependency)):
+async def trades(limit: int = 100, conn: Session = Depends(connection_dependency)):
     """
     Retrieve up to `limit` most recent trades.
     """
@@ -382,7 +381,7 @@ async def trades(limit: int = 100, conn: sqlite3.Connection = Depends(connection
 
 
 @api.get("/orders/open", response_model=List[OrderOut], dependencies=[Depends(require_api_key)])
-async def open_orders(conn: sqlite3.Connection = Depends(connection_dependency)):
+async def open_orders(conn: Session = Depends(connection_dependency)):
     """
     List any in-flight (open) orders.
     """
