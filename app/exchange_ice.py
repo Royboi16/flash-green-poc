@@ -52,7 +52,7 @@ class _ICERestBase:
         best_ask = float(asks[0]["price"]) if asks else None
         return best_bid, best_ask
 
-    def _fetch_order(self, order_id: str) -> dict:
+    def fetch_order(self, order_id: str) -> dict:
         resp = self.session.get(
             f"{self.base_url}/orders/{order_id}", timeout=DEFAULT_TIMEOUT
         )
@@ -97,7 +97,7 @@ class ICEPowerExchange(_ICERestBase):
         avg_price: float = 0.0
 
         while time.time() < deadline:
-            o = self._fetch_order(order_id)
+            o = self.fetch_order(order_id)
             status = o["status"]
             filled = float(o.get("filled_qty", 0))
             avg_price = float(o.get("avg_price", 0))
@@ -133,7 +133,7 @@ class ICEPowerExchange(_ICERestBase):
         avg_price = 0.0
 
         while time.time() < deadline:
-            o = self._fetch_order(order_id)
+            o = self.fetch_order(order_id)
             status = o["status"]
             filled = float(o.get("filled_qty", 0))
             avg_price = float(o.get("avg_price", 0))
@@ -179,7 +179,7 @@ class ICERepoFuturesExchange(_ICERestBase):
         avg_price = 0.0
 
         while time.time() < deadline:
-            o = self._fetch_order(order_id)
+            o = self.fetch_order(order_id)
             status = o["status"]
             filled = float(o.get("filled_qty", 0))
             avg_price = float(o.get("avg_price", 0))

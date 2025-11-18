@@ -92,10 +92,33 @@ def _settle_open_orders(
     power_exchange: PowerExchange, conn: Session
 ) -> None:
     for order in get_open_orders(conn=conn):
-        data = power_exchange._fetch_order(order.id)
-        status = data["status"]
-        filled = float(data.get("filled_qty", 0))
-        avg_price = float(data.get("avg_price", 0))
+        try:
+            data = power_exchange.fetch_order(order.id)
+        except Exception as exc:  # broad to avoid crashing the orchestrator loop
+            METRICS.order_settlement_failures.inc()
+            logger.exception(
+                "Failed to fetch order %s for settlement (symbol=%s, side=%s)",
+                order.id,
+                order.symbol,
+                order.side,
+                exc_info=exc,
+            )
+            continue
+
+        try:
+            status = data["status"]
+            filled = float(data.get("filled_qty", 0))
+            avg_price = float(data.get("avg_price", 0))
+        except (KeyError, TypeError, ValueError) as exc:
+            METRICS.order_settlement_skipped.inc()
+            logger.warning(
+                "Skipping settlement for order %s due to malformed payload: %s (data=%r)",
+                order.id,
+                exc,
+                data,
+            )
+            continue
+
         logger.debug(
             "Settling order %s: status=%s, filled=%s, avg_price=%s",
             order.id,
@@ -103,7 +126,18 @@ def _settle_open_orders(
             filled,
             avg_price,
         )
-        update_order(order.id, filled, avg_price, status, conn=conn)
+
+        try:
+            update_order(order.id, filled, avg_price, status, conn=conn)
+        except Exception as exc:  # pragma: no cover - defensive against DB issues
+            METRICS.order_settlement_failures.inc()
+            logger.exception(
+                "Failed to persist settlement for order %s (status=%s, filled=%s)",
+                order.id,
+                status,
+                filled,
+                exc_info=exc,
+            )
 
 
 def _persist_buy_order(fill_a, qty: float) -> str:

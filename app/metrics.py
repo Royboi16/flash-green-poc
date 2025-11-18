@@ -14,6 +14,14 @@ METRICS.profit_negative = Counter(
     "Cumulative £ loss (negative ticks)",
 )
 METRICS.spread = Gauge("last_spread", "Latest £/MWh spread")
+METRICS.order_settlement_skipped = Counter(
+    "order_settlement_skipped_total",
+    "Open orders skipped during settlement",
+)
+METRICS.order_settlement_failures = Counter(
+    "order_settlement_failures_total",
+    "Failed attempts to settle open orders",
+)
 
 # Fnality/HQLAˣ atomic repo flash-loan path
 METRICS.flash_repo_attempts = Counter(
