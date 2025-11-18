@@ -1,6 +1,5 @@
 # app/web.py
 import asyncio
-import os
 import subprocess
 import time
 from collections import defaultdict
@@ -19,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.logger import logger
+from app.orchestrator import OrchestratorService, OrchestratorSupervisor
 from app.storage import connection_dependency, get_open_orders, get_pnl_totals, get_trades
 
 api = FastAPI(
@@ -29,22 +29,13 @@ api = FastAPI(
 )
 
 _UI_HTML_CACHE: Optional[str] = None
-_ORCHESTRATOR_CMD = ["python", "-m", "app.orchestrator"]
-_orchestrator_process: Optional[subprocess.Popen[str]] = None
+_supervisor = OrchestratorSupervisor(lambda: OrchestratorService())
 _LAST_TEST_RESULT: Optional[Dict[str, object]] = None
 _UI_HTML_PATH = Path(__file__).with_name("static").joinpath("ui.html")
 _RATE_LIMIT_MAX_CALLS = 10
 _RATE_LIMIT_WINDOW_SECONDS = 60
 _RATE_LIMIT_BUCKETS: Dict[str, List[float]] = defaultdict(list)
 _HEALTH_HTTP_TIMEOUT_SECONDS = 5
-_ALLOWED_START_ENV_KEYS = {
-    "ENV_FILE",
-    "TRADING_ENABLED",
-    "USE_LIVE_FEED",
-    "USE_ICE_LIVE",
-    "USE_WEB3_LOAN",
-}
-
 # ─── Models for serialization ────────────────────────────────────────────────
 
 
@@ -145,43 +136,6 @@ async def control_plane_guard(
     return api_key
 
 
-def _validate_orchestrator_command(
-    requested_command: Optional[List[str]], api_key: str
-) -> List[str]:
-    if requested_command and requested_command != _ORCHESTRATOR_CMD:
-        logger.warning(
-            "AUDIT orchestrator start rejected by key=%s reason=disallowed_command command=%s",
-            api_key,
-            requested_command,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Custom commands are not permitted for orchestrator",
-        )
-    return _ORCHESTRATOR_CMD
-
-
-def _validated_start_env(
-    env_overrides: Optional[Dict[str, str]], api_key: str
-) -> Dict[str, str]:
-    if not env_overrides:
-        return {}
-
-    disallowed = sorted(set(env_overrides) - _ALLOWED_START_ENV_KEYS)
-    if disallowed:
-        logger.warning(
-            "AUDIT orchestrator start rejected by key=%s reason=disallowed_env env_keys=%s",
-            api_key,
-            disallowed,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Env overrides not permitted: {', '.join(disallowed)}",
-        )
-
-    return {key: value for key, value in env_overrides.items() if key in _ALLOWED_START_ENV_KEYS}
-
-
 def _load_ui_html() -> str:
     global _UI_HTML_CACHE
 
@@ -198,19 +152,8 @@ def _load_ui_html() -> str:
     return _UI_HTML_CACHE
 
 
-def _process_command(proc: Optional[subprocess.Popen[str]]) -> List[str]:
-    if proc and isinstance(proc.args, list):
-        return [str(arg) for arg in proc.args]
-    return _ORCHESTRATOR_CMD.copy()
-
-
 def _orchestrator_status() -> Dict[str, object]:
-    running = _orchestrator_process is not None and _orchestrator_process.poll() is None
-    return {
-        "running": running,
-        "pid": _orchestrator_process.pid if running and _orchestrator_process else None,
-        "command": _process_command(_orchestrator_process),
-    }
+    return _supervisor.status()
 
 
 def _check_database(conn: Session) -> Dict[str, object]:
@@ -224,9 +167,10 @@ def _check_database(conn: Session) -> Dict[str, object]:
 
 def _check_orchestrator_health() -> Dict[str, object]:
     status = _orchestrator_status()
-    if status["running"]:
+    if status.get("running"):
         return {"status": "ok", **status}
-    return {"status": "error", "detail": "orchestrator process not running", **status}
+    detail = status.get("last_error") or "orchestrator service not running"
+    return {"status": "error", "detail": detail, **status}
 
 
 def _probe_live_feed() -> Dict[str, object]:
@@ -434,54 +378,31 @@ async def ui_service_status():
 async def ui_service_start(
     request: ServiceStartRequest, api_key: str = Depends(control_plane_guard)
 ):
-    global _orchestrator_process
-
-    if _orchestrator_process and _orchestrator_process.poll() is None:
-        return {"detail": "orchestrator already running", **_orchestrator_status()}
-
-    env = os.environ.copy()
-    env.update(_validated_start_env(request.env, api_key=api_key))
-
-    cmd = _validate_orchestrator_command(request.command, api_key=api_key)
-
-    try:
-        _orchestrator_process = subprocess.Popen(cmd, env=env)
-    except FileNotFoundError:
+    if request.command or request.env:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Command not found; ensure the executable exists in PATH",
-        )
-    except Exception as exc:  # pragma: no cover - safeguard
-        logger.error("Failed to start orchestrator", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Could not start orchestrator: {exc}",
+            detail="Custom commands or env overrides are not supported in supervised mode",
         )
 
-    logger.info(
-        "AUDIT orchestrator start issued by key=%s command=%s",
-        api_key,
-        cmd,
-    )
-    return {"detail": "orchestrator started", **_orchestrator_status()}
+    status = _orchestrator_status()
+    if status.get("running"):
+        return {"detail": "orchestrator already running", **status}
+
+    _supervisor.start()
+    status = _orchestrator_status()
+
+    logger.info("AUDIT orchestrator start issued by key=%s status=%s", api_key, status)
+    return {"detail": "orchestrator started", **status}
 
 
 @api.post("/ui/services/stop")
 async def ui_service_stop(api_key: str = Depends(control_plane_guard)):
-    global _orchestrator_process
+    status = _orchestrator_status()
+    if not status.get("running") and not status.get("supervisor_running"):
+        return {"detail": "orchestrator already stopped", **status}
 
-    if _orchestrator_process is None or _orchestrator_process.poll() is not None:
-        _orchestrator_process = None
-        return {"detail": "orchestrator already stopped", **_orchestrator_status()}
-
-    _orchestrator_process.terminate()
-    try:
-        _orchestrator_process.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        _orchestrator_process.kill()
-
+    _supervisor.stop()
     stopped = _orchestrator_status()
-    _orchestrator_process = None
     logger.info(
         "AUDIT orchestrator stop issued by key=%s status=%s",
         api_key,
