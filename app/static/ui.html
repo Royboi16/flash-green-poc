@@ -283,6 +283,10 @@
             <p class="muted hint">Pull quotes from CCXT instead of CSV.</p>
           </div>
           <div>
+            <label class="stack" for="usePowerledgerLive"><input id="usePowerledgerLive" type="checkbox" />USE_POWERLEDGER_LIVE</label>
+            <p class="muted hint">Hit the live Powerledger REST API for the physical leg.</p>
+          </div>
+          <div>
             <label class="stack" for="useIceLive"><input id="useIceLive" type="checkbox" />USE_ICE_LIVE</label>
             <p class="muted hint">Enable real ICE trading instead of the CSV sim.</p>
           </div>
@@ -305,6 +309,31 @@
           <div>
             <label for="liveSymbol">LIVE_SYMBOL</label>
             <input id="liveSymbol" type="text" placeholder="BTC/USDT" />
+          </div>
+          <div>
+            <label for="powerledgerApiUrl">POWERLEDGER_API_URL</label>
+            <input id="powerledgerApiUrl" type="text" placeholder="https://api.powerledger.io/trading" />
+          </div>
+          <div>
+            <label for="powerledgerApiToken">POWERLEDGER_API_TOKEN</label>
+            <input id="powerledgerApiToken" type="password" placeholder="paste bearer token" />
+            <p class="muted hint">Stored locally; rotate when sessions expire.</p>
+          </div>
+          <div>
+            <label for="powerledgerOrg">POWERLEDGER_ORG</label>
+            <input id="powerledgerOrg" type="text" placeholder="energy-desk-lon1" />
+          </div>
+          <div>
+            <label for="powerledgerMarket">POWERLEDGER_MARKET</label>
+            <input id="powerledgerMarket" type="text" placeholder="uk-grid-24h-ahead" />
+          </div>
+          <div>
+            <label for="tradingWindowUtc">TRADING_WINDOW_UTC</label>
+            <input id="tradingWindowUtc" type="text" placeholder="05:00-21:00" />
+          </div>
+          <div>
+            <label class="stack" for="allowWeekendTrading"><input id="allowWeekendTrading" type="checkbox" />ALLOW_WEEKEND_TRADING</label>
+            <p class="muted hint">Tick only when authorised for Saturday/Sunday operations.</p>
           </div>
           <div>
             <label for="iceSymbol">ICE_SYMBOL</label>
@@ -513,6 +542,7 @@ USE_LIVE_FEED=false"></textarea>
       const panels = document.querySelectorAll('.panel');
       const envFields = [
         { id: 'useLiveFeed', key: 'USE_LIVE_FEED', type: 'bool' },
+        { id: 'usePowerledgerLive', key: 'USE_POWERLEDGER_LIVE', type: 'bool' },
         { id: 'useIceLive', key: 'USE_ICE_LIVE', type: 'bool' },
         { id: 'useWeb3Loan', key: 'USE_WEB3_LOAN', type: 'bool' },
         { id: 'useDepthSim', key: 'USE_DEPTH_SIM', type: 'bool' },
@@ -521,6 +551,12 @@ USE_LIVE_FEED=false"></textarea>
         { id: 'metricsPort', key: 'METRICS_PORT' },
         { id: 'liveExchange', key: 'LIVE_EXCHANGE' },
         { id: 'liveSymbol', key: 'LIVE_SYMBOL' },
+        { id: 'powerledgerApiUrl', key: 'POWERLEDGER_API_URL' },
+        { id: 'powerledgerApiToken', key: 'POWERLEDGER_API_TOKEN' },
+        { id: 'powerledgerOrg', key: 'POWERLEDGER_ORG' },
+        { id: 'powerledgerMarket', key: 'POWERLEDGER_MARKET' },
+        { id: 'tradingWindowUtc', key: 'TRADING_WINDOW_UTC' },
+        { id: 'allowWeekendTrading', key: 'ALLOW_WEEKEND_TRADING', type: 'bool' },
         { id: 'iceSymbol', key: 'ICE_SYMBOL' },
         { id: 'hardhatRpc', key: 'HARDHAT_RPC' },
         { id: 'secretsBackend', key: 'SECRETS_BACKEND' },

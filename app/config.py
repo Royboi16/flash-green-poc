@@ -32,6 +32,7 @@ SECRET_FIELD_MAP: Dict[str, str] = {
     "live_api_secret": "LIVE_API_SECRET",
     "ice_api_key": "ICE_API_KEY",
     "ice_api_secret": "ICE_API_SECRET",
+    "powerledger_api_token": "POWERLEDGER_API_TOKEN",
     "flash_loan_contract": "FLASH_LOAN_CONTRACT",
     "receiver_address": "FLASH_LOAN_RECEIVER",
     "lender_private_key": "LENDER_KEY",
@@ -114,6 +115,14 @@ class Settings(BaseSettings):
     max_daily_loss_gbp: float = Field(
         500.0, description="Stop trading after this daily loss (£)"
     )
+    trading_window_utc: str = Field(
+        "05:00-21:00",
+        env="TRADING_WINDOW_UTC",
+        description="UTC trading window HH:MM-HH:MM (supports overnight windows)",
+    )
+    allow_weekend_trading: bool = Field(
+        False, env="ALLOW_WEEKEND_TRADING", description="Permit Saturday/Sunday trades"
+    )
 
     # mock-feed params
     pl_sigma: PositiveFloat = Field(25, description="Std-dev for spot noise")
@@ -194,6 +203,33 @@ class Settings(BaseSettings):
     )
     ice_symbol: Optional[str] = Field(
         "UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol"
+    )
+
+    # Live Powerledger integration for the physical leg
+    use_powerledger_live: bool = Field(
+        False,
+        env="USE_POWERLEDGER_LIVE",
+        description="Enable Powerledger REST trades for the power leg",
+    )
+    powerledger_api_url: Optional[AnyUrl] = Field(
+        None,
+        env="POWERLEDGER_API_URL",
+        description="Base URL for the Powerledger trading API",
+    )
+    powerledger_api_token: Optional[str] = Field(
+        None,
+        env="POWERLEDGER_API_TOKEN",
+        description="Org-scoped Powerledger API token",
+    )
+    powerledger_org: Optional[str] = Field(
+        None,
+        env="POWERLEDGER_ORG",
+        description="Organisation id used when posting orders",
+    )
+    powerledger_market: Optional[str] = Field(
+        None,
+        env="POWERLEDGER_MARKET",
+        description="Powerledger market identifier for spot energy",
     )
 
     # ----------------------------------------------------------------------
@@ -322,6 +358,22 @@ class Settings(BaseSettings):
                     + " – either set those env vars, or export USE_ICE_LIVE=0"
                 )
 
+        if model.use_powerledger_live:
+            missing = [
+                field
+                for field in (
+                    "powerledger_api_url",
+                    "powerledger_api_token",
+                    "powerledger_org",
+                    "powerledger_market",
+                )
+                if getattr(model, field) in (None, "")
+            ]
+            if missing:
+                raise ValueError(
+                    "USE_POWERLEDGER_LIVE=1 requires: " + ", ".join(missing)
+                )
+
         if model.use_web3_loan:
             missing = [
                 field
@@ -336,6 +388,15 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "USE_WEB3_LOAN=1 requires: " + ", ".join(missing)
                 )
+
+        try:
+            start, end = model.trading_window_utc.split("-")
+            for part in (start, end):
+                hour, minute = [int(p) for p in part.split(":", maxsplit=1)]
+                if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+                    raise ValueError
+        except ValueError:
+            raise ValueError("TRADING_WINDOW_UTC must be HH:MM-HH:MM using 24h clock")
 
         return model
 

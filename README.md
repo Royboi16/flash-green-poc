@@ -74,8 +74,14 @@ fast with actionable error messages.
 | Toggle | Description | Required credentials |
 | --- | --- | --- |
 | `USE_LIVE_FEED` | Consume CCXT live data | `LIVE_EXCHANGE`, `LIVE_SYMBOL`, `LIVE_API_KEY`, `LIVE_API_SECRET` |
+| `USE_POWERLEDGER_LIVE` | Pull power-leg prices/orders from Powerledger | `POWERLEDGER_API_URL`, `POWERLEDGER_API_TOKEN`, `POWERLEDGER_ORG`, `POWERLEDGER_MARKET` |
 | `USE_ICE_LIVE` | Route trades to the ICE adapter | `ICE_API_URL`, `ICE_API_KEY`, `ICE_API_SECRET`, `ICE_SYMBOL` |
 | `USE_WEB3_LOAN` | Use the on-chain Hardhat/Web3 flash loan | `FLASH_LOAN_CONTRACT`, `FLASH_LOAN_RECEIVER`, `LENDER_KEY`, `HARDHAT_RPC` |
+
+Trading cadence is governed by `TRADING_WINDOW_UTC` (default `05:00-21:00`) and
+`ALLOW_WEEKEND_TRADING` (default `0`). The orchestrator will block cycles when
+running outside the UTC window or during Saturday/Sunday if the weekend flag is
+off.
 
 Any missing credential raises a `ValueError` during `Settings` initialisation.
 This prevents the orchestrator from starting if a release misses an env var.
@@ -84,3 +90,63 @@ This prevents the orchestrator from starting if a release misses an env var.
 
 Configuration regressions are caught via `pytest -k config`, which instantiates
 `Settings` under multiple feature combinations.
+
+## Operational runbooks (atomic energy-versus-futures arbitrage)
+
+### Live Powerledger + ICE connectivity
+
+1. Set `USE_POWERLEDGER_LIVE=1` and `USE_ICE_LIVE=1` in `.env`.
+2. Populate Powerledger requirements:
+   - `POWERLEDGER_API_URL` – e.g. `https://api.powerledger.io/trading` (or the
+     UAT endpoint noted in `env.staging.example`).
+   - `POWERLEDGER_API_TOKEN` – org-scoped bearer issued by Powerledger ops.
+   - `POWERLEDGER_ORG` – trading org/desk identifier used on every order
+     payload.
+   - `POWERLEDGER_MARKET` – market code for the physical leg (example:
+     `uk-grid-24h-ahead`).
+3. Populate ICE live settings (`ICE_API_URL`, `ICE_API_KEY`, `ICE_API_SECRET`,
+   `ICE_SYMBOL`). The live adapter polls
+   `GET {ICE_API_URL}/marketdata/{ICE_SYMBOL}/price` and posts orders to
+   `/orders`.
+4. Confirm the trading window (`TRADING_WINDOW_UTC`) spans the desired desk
+   hours, then start the orchestrator with `poetry run python -m
+   app.orchestrator`.
+5. Inspect `/healthz` and `/metrics` to verify Powerledger and ICE sessions are
+   reachable before opening risk limits.
+
+### Wholesale-CBDC settlement
+
+1. Enable `USE_WEB3_LOAN=1` and point `HARDHAT_RPC` at the wholesale-CBDC node
+   or sandbox RPC. For an Infura-style endpoint, keep HTTPS and ensure the
+   backend supports flash-loan atomicity.
+2. Set `FLASH_LOAN_CONTRACT` (deployed flash-loan contract),
+   `FLASH_LOAN_RECEIVER` (TestReceiver or production receiver), and `LENDER_KEY`
+   (custodied signing key with access to the CBDC settlement account).
+3. Allocate sufficient CBDC float to the lender wallet to cover
+   `LOAN_LIMIT_GBP` (default £100k) plus gas.
+4. When the orchestrator executes, the power-leg order is paired with the
+   futures-leg exit and the CBDC loan in a single cycle. Failed CBDC settlement
+   triggers the existing `trades_blocked` Prometheus counter and logs a
+   stacktrace for triage.
+
+### 24×7 monitoring and alerting
+
+- Prometheus: scrape `METRICS_PORT` (default 8000 in staging, 9000 in prod).
+  Alert on `trades_blocked` spikes, `profit_negative` growth, and exporter
+  liveness. Suggested alert: no successful `trade executed` log line within
+  10 minutes while markets are open.
+- Logs: ship `app/logger` output to a central stack (e.g. Loki/ELK) with
+  filters on `Powerledger` and `ICE` to catch intermittent HTTP failures.
+- Health: `/healthz` should return 200; `/metrics` includes `daily_loss` and
+  spread gauges used by Grafana dashboards. Add blackbox probes for the
+  Powerledger and ICE base URLs noted above.
+
+### Controls for weekend/after-hours execution
+
+- `TRADING_WINDOW_UTC` constrains trading to a UTC window. Overnight windows are
+  supported by specifying an end earlier than the start (e.g. `22:00-06:00`).
+- `ALLOW_WEEKEND_TRADING=0` blocks cycles on Saturday/Sunday; set to `1` only
+  when authorised for continuous operations.
+- The orchestrator enforces both guards before reading market data, ensuring the
+  atomic power-versus-futures loop cannot start outside authorised hours even if
+  the process is left running unattended.

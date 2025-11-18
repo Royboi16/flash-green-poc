@@ -5,7 +5,7 @@ loops forever once every second.
 """
 
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, time, timezone
 from time import sleep
 
 from app.config import settings
@@ -22,15 +22,17 @@ from app.storage import (
 from app.strategy import should_trade
 
 # --- choose PowerExchange implementation ------------------------------------
-if settings.use_ice_live:
-    from app.exchange_ice import ICEPowerExchange as PowerExchange
+if settings.use_powerledger_live:
+    from app.exchange_powerledger import PowerledgerExchange as PowerExchange
 elif settings.use_depth_sim:
     from app.exchange import DepthAwarePowerExchange as PowerExchange
+elif settings.use_ice_live:
+    from app.exchange_ice import ICEPowerExchange as PowerExchange
 else:
     from app.exchange import PowerCsvExchange as PowerExchange
 
 # instantiate power exchange
-if settings.use_ice_live:
+if settings.use_powerledger_live or settings.use_ice_live:
     POWER = PowerExchange()
 elif settings.use_depth_sim:
     POWER = PowerExchange(
@@ -42,10 +44,15 @@ elif settings.use_depth_sim:
 else:
     POWER = PowerExchange()
 
-# futures always CSV for now
-from app.exchange import IceCsvExchange
+# futures: live ICE when enabled
+if settings.use_ice_live:
+    from app.exchange_ice import ICEPowerExchange as IceExchange
 
-ice = IceCsvExchange()
+    ice = IceExchange()
+else:
+    from app.exchange import IceCsvExchange
+
+    ice = IceCsvExchange()
 
 # flash-loan adapter (unchanged)
 if settings.use_web3_loan:
@@ -56,6 +63,13 @@ else:
 
 def _today() -> date:
     return date.today()
+
+
+def _parse_window(raw: str) -> tuple[time, time]:
+    start_s, end_s = raw.split("-")
+    start_parts = [int(part) for part in start_s.split(":", maxsplit=1)]
+    end_parts = [int(part) for part in end_s.split(":", maxsplit=1)]
+    return time(start_parts[0], start_parts[1]), time(end_parts[0], end_parts[1])
 
 
 # Globals to track daily PnL
@@ -155,7 +169,28 @@ def run_cycle() -> bool:
         _daily_loss = 0.0
         METRICS.daily_loss.set(_daily_loss)
 
-    if settings.use_ice_live:
+    now = datetime.now(tz=timezone.utc)
+    if not settings.allow_weekend_trading and now.weekday() >= 5:
+        METRICS.trades_blocked.inc()
+        logger.info("Weekend guard active; skipping trades on Saturday/Sunday")
+        return False
+
+    start, end = _parse_window(settings.trading_window_utc)
+    now_time = now.time()
+    if start <= end:
+        in_window = start <= now_time <= end
+    else:
+        in_window = now_time >= start or now_time <= end
+    if not in_window:
+        METRICS.trades_blocked.inc()
+        logger.info(
+            "Outside configured trading window %s; current UTC %s",
+            settings.trading_window_utc,
+            now.strftime("%H:%M"),
+        )
+        return False
+
+    if settings.use_ice_live or settings.use_powerledger_live:
         with get_connection() as conn:
             _settle_open_orders(POWER, conn)
             if get_open_orders(conn=conn):
