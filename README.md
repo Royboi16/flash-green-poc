@@ -5,6 +5,16 @@ simulated or live power feeds, a loan adapter, and orchestration logic.  The
 configuration system now validates all sensitive feature toggles and can source
 secrets from HashiCorp Vault or AWS Secrets Manager.
 
+**Core idea – cross-market, on-chain vs. futures arbitrage**
+
+| Leg | Action | Venue | Why the mis-pricing exists |
+| --- | --- | --- | --- |
+| A | Buy tokenised renewable-kWh when the UK grid goes negative | Powerledger P2P pool (on-chain, 24×7) | UK spot power regularly flips negative in oversupply hours. |
+| B | Sell the matching delivery window on ICE UK Baseload futures | ICE Futures Europe (T+0 fills) | Futures curves price to average demand hours and rarely turn negative, leaving a premium. |
+
+Because Leg A settles instantly on-chain and Leg B fills at the matching engine, only short-lived cash is required until both
+legs confirm—mirroring a flash-loan pattern.
+
 ## Configuration workflow
 
 1. Pick the closest environment template (`env.staging.example` or
@@ -116,9 +126,12 @@ fast with actionable error messages.
 
 ### Feature toggles
 
+The production chassis is **Powerledger + ICE**. The optional CCXT feed is just a sandbox path for developers who want to plug
+in any liquid symbol (e.g., BTC/USDT) while exercising the orchestration loop; it does **not** route to power tokens.
+
 | Toggle | Description | Required credentials |
 | --- | --- | --- |
-| `USE_LIVE_FEED` | Consume CCXT live data | `LIVE_EXCHANGE`, `LIVE_SYMBOL`, `LIVE_API_KEY`, `LIVE_API_SECRET` |
+| `USE_LIVE_FEED` | Consume CCXT live data for dev/testing (not used for power tokens) | `LIVE_EXCHANGE`, `LIVE_SYMBOL`, `LIVE_API_KEY`, `LIVE_API_SECRET` |
 | `USE_POWERLEDGER_LIVE` | Pull power-leg prices/orders from Powerledger | `POWERLEDGER_API_URL`, `POWERLEDGER_API_TOKEN`, `POWERLEDGER_ORG`, `POWERLEDGER_MARKET` |
 | `USE_ICE_LIVE` | Route trades to the ICE adapter | `ICE_API_URL`, `ICE_API_KEY`, `ICE_API_SECRET`, `ICE_SYMBOL` |
 | `USE_WEB3_LOAN` | Use the on-chain Hardhat/Web3 flash loan | `FLASH_LOAN_CONTRACT`, `FLASH_LOAN_RECEIVER`, `LENDER_KEY`, `HARDHAT_RPC` |
