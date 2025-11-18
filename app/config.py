@@ -32,6 +32,7 @@ SECRET_FIELD_MAP: Dict[str, str] = {
     "live_api_secret": "LIVE_API_SECRET",
     "ice_api_key": "ICE_API_KEY",
     "ice_api_secret": "ICE_API_SECRET",
+    "fnality_repo_api_token": "FNALITY_REPO_API_TOKEN",
     "powerledger_api_token": "POWERLEDGER_API_TOKEN",
     "flash_loan_contract": "FLASH_LOAN_CONTRACT",
     "receiver_address": "FLASH_LOAN_RECEIVER",
@@ -192,6 +193,11 @@ class Settings(BaseSettings):
 
     # Live ICE integration (optional unless USE_ICE_LIVE=1)
     use_ice_live: bool = Field(False, env="USE_ICE_LIVE", description="Enable ICE live trading")
+    futures_live_adapter: Literal["ice_rest", "fnality_repo"] = Field(
+        "ice_rest",
+        env="FUTURES_LIVE_ADAPTER",
+        description="Choose the live futures adapter (ice_rest|fnality_repo)",
+    )
     ice_api_url: Optional[AnyUrl] = Field(
         None, env="ICE_API_URL", description="Base URL for ICE REST API"
     )
@@ -203,6 +209,23 @@ class Settings(BaseSettings):
     )
     ice_symbol: Optional[str] = Field(
         "UK_BASELOAD_Q2_2025", env="ICE_SYMBOL", description="ICE symbol"
+    )
+
+    # Fnality×HQLAˣ repo integration (futures leg)
+    fnality_repo_api_url: Optional[AnyUrl] = Field(
+        None,
+        env="FNALITY_REPO_API_URL",
+        description="Base URL for the Fnality×HQLAˣ repo orderbook",
+    )
+    fnality_repo_api_token: Optional[str] = Field(
+        None,
+        env="FNALITY_REPO_API_TOKEN",
+        description="Bearer token for Fnality×HQLAˣ repo access",
+    )
+    fnality_repo_market: Optional[str] = Field(
+        None,
+        env="FNALITY_REPO_MARKET",
+        description="Market identifier for Fnality×HQLAˣ repos",
     )
 
     # Live Powerledger integration for the physical leg
@@ -356,17 +379,39 @@ class Settings(BaseSettings):
                 )
 
         if model.use_ice_live:
-            missing = [
+            ice_missing = [
                 field
-                for field in ("ice_api_url", "ice_api_key", "ice_api_secret", "ice_symbol")
+                for field in (
+                    "ice_api_url",
+                    "ice_api_key",
+                    "ice_api_secret",
+                    "ice_symbol",
+                )
                 if getattr(model, field) in (None, "")
             ]
-            if missing:
+            if ice_missing:
                 raise ValueError(
                     "Missing ICE config: "
-                    + ", ".join(missing)
+                    + ", ".join(ice_missing)
                     + " – either set those env vars, or export USE_ICE_LIVE=0"
                 )
+
+            if model.futures_live_adapter == "fnality_repo":
+                missing = [
+                    field
+                    for field in (
+                        "fnality_repo_api_url",
+                        "fnality_repo_api_token",
+                        "fnality_repo_market",
+                    )
+                    if getattr(model, field) in (None, "")
+                ]
+                if missing:
+                    raise ValueError(
+                        "Missing Fnality/HQLAˣ repo config: "
+                        + ", ".join(missing)
+                        + " – either set those env vars, or export USE_ICE_LIVE=0"
+                    )
 
         if model.use_powerledger_live:
             missing = [

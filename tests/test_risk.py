@@ -58,9 +58,9 @@ def test_daily_loss_cap(monkeypatch):
 
     monkeypatch.setattr("app.orchestrator.should_trade", fake_should_trade)
     monkeypatch.setattr("app.orchestrator.POWER.quote", lambda: 10_000.0)
-    monkeypatch.setattr("app.orchestrator.ice.quote", lambda: 9_999.0)
+    monkeypatch.setattr("app.orchestrator.FUTURES.quote", lambda: 9_999.0)
     monkeypatch.setattr("app.orchestrator.POWER.buy", lambda *_, **__: Fill(-20.0))
-    monkeypatch.setattr("app.orchestrator.ice.sell", lambda *_, **__: Fill(-30.0))
+    monkeypatch.setattr("app.orchestrator.FUTURES.sell", lambda *_, **__: Fill(-30.0))
     monkeypatch.setattr("app.orchestrator.save_order", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.orchestrator.save_trade", lambda *_args, **_kwargs: None)
 
