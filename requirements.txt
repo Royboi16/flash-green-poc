@@ -1,0 +1,28 @@
+# --- core dependencies ---
+aiohttp>=3.9
+pydantic>=2.6
+pydantic-settings>=2.1
+prometheus-client>=0.20
+numpy>=1.26
+pandas>=2.2
+numba>=0.59              # optional GPU / JIT speed-ups
+rich>=13.7
+loguru>=0.7
+uvicorn>=0.34.1
+fastapi>=0.115.12
+httpx>=0.24
+ccxt>=4.4.91
+requests>=2.31.0
+hvac>=2.1
+boto3>=1.34
+
+# --- optional extras (align with poetry extras) ---
+web3>=6.15               # flash-loan / Hardhat integration
+python-dotenv>=1.0       # load .env into config
+
+# --- testing ---
+pytest>=8.1
+hypothesis>=6.98
+
+# --- development ---
+flake8>=7.1
