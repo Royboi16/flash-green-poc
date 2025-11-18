@@ -90,7 +90,7 @@ class PowerledgerExchange:
 
         return self._await_fill(order_id, "SELL")
 
-    def _fetch_order(self, order_id: str) -> dict:
+    def fetch_order(self, order_id: str) -> dict:
         resp = self.session.get(
             f"{self.base_url}/orders/{order_id}", timeout=DEFAULT_TIMEOUT
         )
@@ -109,7 +109,7 @@ class PowerledgerExchange:
         avg_price: float = 0.0
 
         while time.time() < deadline:
-            order = self._fetch_order(order_id)
+            order = self.fetch_order(order_id)
             status = order["status"]
             filled = float(order.get("filled_qty", 0))
             avg_price = float(order.get("avg_price", 0))
