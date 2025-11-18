@@ -20,7 +20,8 @@ legs confirm—mirroring a flash-loan pattern.
 1. Pick the closest environment template (`env.staging.example` or
    `env.production.example`).
 2. Copy it to `.env` (or the location you pass to `Settings`).
-3. Fill in the placeholders for the features you are enabling.
+3. Fill in the placeholders for the features you are enabling. **`API_KEY` is
+   mandatory**; the FastAPI app refuses to start if it is missing or empty.
 4. Optional – point `SECRETS_BACKEND` at Vault or AWS Secrets Manager if you do
    not want secrets committed to disk.
 
@@ -29,11 +30,13 @@ app.orchestrator` will load the `.env` file automatically.
 
 API endpoints that expose metrics or trading data require a shared secret in the
 `X-API-Key` header. Set `API_KEY` in your `.env` (or secret manager) and pass it
-with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`. The
-control-plane endpoints that start/stop the orchestrator or run tests **refuse
-all requests** when `API_KEY` is missing or incorrect and are rate limited with
-audit logging. See `docs/deployment.md` for the minimum security checklist
-before exposing the service.
+with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`. The API
+will fail FastAPI initialisation if `API_KEY` is not set and will return `503`
+for any request when the key is missing. The control-plane endpoints that
+start/stop the orchestrator or run tests **refuse all requests** when `API_KEY`
+is missing or incorrect and are rate limited with audit logging. See
+`docs/deployment.md` for the minimum security checklist before exposing the
+service.
 
 ## Local API + UI
 
@@ -142,7 +145,8 @@ running outside the UTC window or during Saturday/Sunday if the weekend flag is
 off.
 
 Any missing credential raises a `ValueError` during `Settings` initialisation.
-This prevents the orchestrator from starting if a release misses an env var.
+This prevents the orchestrator from starting if a release misses an env var –
+including the mandatory `API_KEY`.
 
 ### Tests
 

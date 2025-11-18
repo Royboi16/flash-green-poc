@@ -461,6 +461,12 @@ class Settings(BaseSettings):
 
         return model
 
+    @model_validator(mode="after")
+    def _require_api_key(cls, model: "Settings") -> "Settings":
+        if not model.api_key:
+            raise ValueError("API_KEY is required for all deployments")
+        return model
+
     class Config:
         env_file_encoding = "utf-8"
         case_sensitive = False

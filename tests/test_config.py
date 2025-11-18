@@ -5,7 +5,9 @@ from app.config import Settings
 
 
 def _settings(**overrides):
-    return Settings(_env_file=None, **overrides)
+    defaults = {"api_key": "test-api-key"}
+    defaults.update(overrides)
+    return Settings(_env_file=None, **defaults)
 
 
 def test_live_feed_requires_credentials():
@@ -69,6 +71,7 @@ def test_secret_backend_populates_missing_fields(monkeypatch):
         return {
             "LIVE_API_KEY": "vault-key",
             "LIVE_API_SECRET": "vault-secret",
+            "API_KEY": "vault-api-key",
         }
 
     monkeypatch.setattr(config, "_load_vault_secret", fake_vault)
@@ -79,6 +82,7 @@ def test_secret_backend_populates_missing_fields(monkeypatch):
         live_symbol="BTC/USDT",
         live_api_key=None,
         live_api_secret=None,
+        api_key=None,
         secrets_backend="vault",
         secrets_vault_addr="http://vault.local",
         secrets_vault_token="s.x",
@@ -87,6 +91,7 @@ def test_secret_backend_populates_missing_fields(monkeypatch):
 
     assert settings.live_api_key == "vault-key"
     assert settings.live_api_secret == "vault-secret"
+    assert settings.api_key == "vault-api-key"
 
 
 def test_secret_backend_requires_config():
@@ -99,3 +104,8 @@ def test_normalise_vault_secret_path_handles_rest_style():
     assert config._normalise_vault_secret_path("/secret/data/foo/bar") == "foo/bar"
     assert config._normalise_vault_secret_path("kv/metadata/nested/path") == "nested/path"
     assert config._normalise_vault_secret_path("flash-green") == "flash-green"
+
+
+def test_api_key_is_required():
+    with pytest.raises(ValueError, match="API_KEY is required"):
+        _settings(api_key=None)
