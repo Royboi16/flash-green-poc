@@ -551,24 +551,27 @@ async def ui_service_start(
             detail="Custom commands or env overrides are not supported in supervised mode",
         )
 
-    status = _orchestrator_status()
-    if status.get("running"):
-        return {"detail": "orchestrator already running", **status}
+    orchestrator_status = _orchestrator_status()
+    if orchestrator_status.get("running"):
+        return {"detail": "orchestrator already running", **orchestrator_status}
 
     _supervisor.start()
-    status = _orchestrator_status()
+    orchestrator_status = _orchestrator_status()
 
     _audit_log(
-        action="/ui/services/start", request=request, principal=principal, status=status
+        action="/ui/services/start",
+        request=request,
+        principal=principal,
+        status=orchestrator_status,
     )
-    return {"detail": "orchestrator started", **status}
+    return {"detail": "orchestrator started", **orchestrator_status}
 
 
 @api.post("/ui/services/stop")
 async def ui_service_stop(request: Request, principal: Principal = Depends(control_plane_guard)):
-    status = _orchestrator_status()
-    if not status.get("running") and not status.get("supervisor_running"):
-        return {"detail": "orchestrator already stopped", **status}
+    orchestrator_status = _orchestrator_status()
+    if not orchestrator_status.get("running") and not orchestrator_status.get("supervisor_running"):
+        return {"detail": "orchestrator already stopped", **orchestrator_status}
 
     _supervisor.stop()
     stopped = _orchestrator_status()

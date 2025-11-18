@@ -7,7 +7,12 @@ from app.web import api, connection_dependency, settings
 
 
 def _client() -> TestClient:
-    return TestClient(api)
+    default_headers = {}
+    if settings.client_cert_subject_header:
+        default_headers[settings.client_cert_subject_header] = "test-subject"
+    if settings.forwarded_proto_header:
+        default_headers[settings.forwarded_proto_header] = "https"
+    return TestClient(api, headers=default_headers)
 
 
 def _auth_headers(value: str | None = None) -> dict[str, str]:
@@ -112,49 +117,49 @@ def test_healthz_reports_adapter_failures(monkeypatch):
 
 def test_ui_service_start_enforces_fixed_command(monkeypatch):
     monkeypatch.setattr(settings, "api_key", "secret-key")
-    monkeypatch.setattr(web, "_orchestrator_process", None)
+    started = {"called": False}
 
-    started = {}
+    class DummySupervisor:
+        def status(self):
+            return {"running": False, "supervisor_running": False}
 
-    class DummyProcess:
-        pid = 999
+        def start(self):
+            started["called"] = True
 
-        def __init__(self, args, env=None):
-            started["args"] = args
-            started["env"] = env or {}
-            self.args = args
+        def stop(self):  # pragma: no cover - not used here
+            started["stopped"] = True
 
-        def poll(self):
-            return None
-
-    monkeypatch.setattr(web.subprocess, "Popen", lambda args, env=None: DummyProcess(args, env))
+    monkeypatch.setattr(web, "_supervisor", DummySupervisor())
 
     client = _client()
     resp = client.post(
         "/ui/services/start",
         headers=_auth_headers("secret-key"),
         json={
-            "command": web._ORCHESTRATOR_CMD.copy(),
+            "command": ["/usr/bin/python", "-m", "app.orchestrator"],
             "env": {"ENV_FILE": ".env.custom", "USE_LIVE_FEED": "0"},
         },
     )
 
-    assert resp.status_code == 200
-    assert started["args"] == web._ORCHESTRATOR_CMD
-    assert started["env"]["ENV_FILE"] == ".env.custom"
-    assert started["env"]["USE_LIVE_FEED"] == "0"
+    assert resp.status_code == 400
+    assert not started["called"]
 
 
 def test_ui_service_start_rejects_custom_command(monkeypatch):
     monkeypatch.setattr(settings, "api_key", "secret-key")
-    monkeypatch.setattr(web, "_orchestrator_process", None)
-    monkeypatch.setattr(web.subprocess, "Popen", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()))
-    warnings: list[tuple[tuple, dict]] = []
+    started = {"called": False}
 
-    def _fake_warning(*args, **kwargs):
-        warnings.append((args, kwargs))
+    class DummySupervisor:
+        def status(self):
+            return {"running": False, "supervisor_running": False}
 
-    monkeypatch.setattr(web.logger, "warning", _fake_warning)
+        def start(self):
+            started["called"] = True
+
+        def stop(self):  # pragma: no cover - not used here
+            started["stopped"] = True
+
+    monkeypatch.setattr(web, "_supervisor", DummySupervisor())
 
     client = _client()
     resp = client.post(
@@ -164,25 +169,24 @@ def test_ui_service_start_rejects_custom_command(monkeypatch):
     )
 
     assert resp.status_code == 400
-    assert warnings
-    assert "disallowed_command" in warnings[0][0][0]
+    assert not started["called"]
 
 
 def test_ui_service_start_rejects_unapproved_env(monkeypatch):
     monkeypatch.setattr(settings, "api_key", "secret-key")
-    monkeypatch.setattr(web, "_orchestrator_process", None)
-    called = {}
-    warnings: list[tuple[tuple, dict]] = []
+    started = {"called": False}
 
-    def _fake_popen(*_args, **_kwargs):
-        called["invoked"] = True
-        raise AssertionError("Popen should not be called when env is invalid")
+    class DummySupervisor:
+        def status(self):
+            return {"running": False, "supervisor_running": False}
 
-    def _fake_warning(*args, **kwargs):
-        warnings.append((args, kwargs))
+        def start(self):
+            started["called"] = True
 
-    monkeypatch.setattr(web.subprocess, "Popen", _fake_popen)
-    monkeypatch.setattr(web.logger, "warning", _fake_warning)
+        def stop(self):  # pragma: no cover - not used here
+            started["stopped"] = True
+
+    monkeypatch.setattr(web, "_supervisor", DummySupervisor())
 
     client = _client()
     resp = client.post(
@@ -192,6 +196,4 @@ def test_ui_service_start_rejects_unapproved_env(monkeypatch):
     )
 
     assert resp.status_code == 400
-    assert warnings
-    assert "disallowed_env" in warnings[0][0][0]
-    assert not called
+    assert not started["called"]
