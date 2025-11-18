@@ -11,7 +11,7 @@ from time import sleep
 from app.config import settings
 from app.logger import logger
 from app.metrics import METRICS
-from app.loan_repo import FnalityHQLAXFlashAdapter, RepoSettlementError
+from app.loan_repo import FnalityHQLAXFlashAdapter, RepoSettlement, RepoSettlementError
 from app.storage import (
     Order,
     get_connection,
@@ -120,7 +120,14 @@ def _persist_buy_order(fill_a, qty: float) -> str:
     return order_id
 
 
-def _record_trade(fill_a, fill_b, qty: float, spot: float, fut: float) -> float:
+def _record_trade(
+    fill_a,
+    fill_b,
+    qty: float,
+    spot: float,
+    fut: float,
+    repo_settlement: RepoSettlement | None = None,
+) -> float:
     global _daily_loss
 
     profit = fill_a.qty_mwh * fill_a.price + fill_b.qty_mwh * fill_b.price
@@ -139,6 +146,10 @@ def _record_trade(fill_a, fill_b, qty: float, spot: float, fut: float) -> float:
             spot_price=spot,
             fut_price=fut,
             profit=profit,
+            repo_tx_hash=repo_settlement.tx_hash if repo_settlement else None,
+            repo_cash_token=repo_settlement.cash_token if repo_settlement else None,
+            repo_asset_token=repo_settlement.asset_token if repo_settlement else None,
+            repo_timestamp=repo_settlement.timestamp if repo_settlement else None,
             conn=conn,
         )
 
@@ -261,14 +272,14 @@ def run_cycle() -> bool:
         try:
             with repo_adapter.transactional_repo(
                 cash_amount_wei=int(settings.loan_limit_gbp * 10**18)
-            ):
+            ) as settlement:
                 fill_a = POWER.buy(qty, max_price=spot)
                 if not _check_notional(fill_a):
                     raise RepoSettlementError("Notional limit exceeded")
 
                 _persist_buy_order(fill_a, qty)
                 fill_b = FUTURES.sell(qty)
-                _record_trade(fill_a, fill_b, qty, spot, fut)
+                _record_trade(fill_a, fill_b, qty, spot, fut, settlement)
                 return True
         except RepoSettlementError as exc:
             METRICS.trades_blocked.inc()

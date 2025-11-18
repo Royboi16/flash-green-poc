@@ -71,7 +71,11 @@ def _init_schema() -> None:
                     spot_price REAL,
                     fut_price  REAL,
                     profit     REAL,
-                    timestamp  TEXT
+                    timestamp  TEXT,
+                    repo_tx_hash TEXT,
+                    repo_cash_token TEXT,
+                    repo_asset_token TEXT,
+                    repo_timestamp TEXT
                 )
                 """
             )
@@ -89,6 +93,18 @@ def _init_schema() -> None:
                 )
                 """
             )
+
+            existing_cols = {
+                row["name"] for row in conn.execute("PRAGMA table_info(trades)")
+            }
+            if "repo_tx_hash" not in existing_cols:
+                conn.execute("ALTER TABLE trades ADD COLUMN repo_tx_hash TEXT")
+            if "repo_cash_token" not in existing_cols:
+                conn.execute("ALTER TABLE trades ADD COLUMN repo_cash_token TEXT")
+            if "repo_asset_token" not in existing_cols:
+                conn.execute("ALTER TABLE trades ADD COLUMN repo_asset_token TEXT")
+            if "repo_timestamp" not in existing_cols:
+                conn.execute("ALTER TABLE trades ADD COLUMN repo_timestamp TEXT")
 
 
 _init_schema()
@@ -116,6 +132,10 @@ def save_trade(
     spot_price: float,
     fut_price: float,
     profit: float,
+    repo_tx_hash: str | None = None,
+    repo_cash_token: str | None = None,
+    repo_asset_token: str | None = None,
+    repo_timestamp: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
     """Persist a completed trade (used by your PoC)."""
@@ -126,10 +146,30 @@ def save_trade(
             connection.execute(
                 """
                 INSERT INTO trades
-                    (qty_mwh, spot_price, fut_price, profit, timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                    (
+                        qty_mwh,
+                        spot_price,
+                        fut_price,
+                        profit,
+                        timestamp,
+                        repo_tx_hash,
+                        repo_cash_token,
+                        repo_asset_token,
+                        repo_timestamp
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (qty_mwh, spot_price, fut_price, profit, ts),
+                (
+                    qty_mwh,
+                    spot_price,
+                    fut_price,
+                    profit,
+                    ts,
+                    repo_tx_hash,
+                    repo_cash_token,
+                    repo_asset_token,
+                    repo_timestamp,
+                ),
             )
     finally:
         _close_if_owned(connection, owns_conn)
@@ -138,7 +178,17 @@ def save_trade(
 def get_trades(limit: int | None = None, conn: sqlite3.Connection | None = None) -> List[Dict[str, Any]]:
     """Fetch past trades for your PnL API ordered by recency."""
     sql = """
-        SELECT id, qty_mwh, spot_price, fut_price, profit, timestamp
+        SELECT
+            id,
+            qty_mwh,
+            spot_price,
+            fut_price,
+            profit,
+            timestamp,
+            repo_tx_hash,
+            repo_cash_token,
+            repo_asset_token,
+            repo_timestamp
           FROM trades
          ORDER BY timestamp DESC, id DESC
     """
