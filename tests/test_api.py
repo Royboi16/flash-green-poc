@@ -1,6 +1,8 @@
+import sqlite3
+
 from fastapi.testclient import TestClient
 
-from app.web import api, settings
+from app.web import api, connection_dependency, settings
 
 
 def _client() -> TestClient:
@@ -54,3 +56,54 @@ def test_requests_fail_when_api_key_not_configured(monkeypatch):
     resp = client.get("/pnl", headers=_auth_headers("any"))
     assert resp.status_code == 503
     assert resp.json()["detail"] == "API_KEY is not configured"
+
+
+def test_healthz_returns_200_for_liveness(monkeypatch):
+    monkeypatch.setattr(settings, "use_live_feed", False)
+    monkeypatch.setattr(settings, "use_ice_live", False)
+    monkeypatch.setattr(settings, "use_powerledger_live", False)
+    client = _client()
+
+    resp = client.get("/healthz", params={"probe": "liveness"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["probe"] == "liveness"
+    assert body["status"] == "ok"
+    assert body["checks"]["database"]["status"] == "ok"
+
+
+def test_healthz_flags_database_failure(monkeypatch):
+    class BrokenConn:
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("boom")
+
+    api.dependency_overrides[connection_dependency] = lambda: BrokenConn()
+    client = _client()
+
+    resp = client.get("/healthz")
+
+    api.dependency_overrides.clear()
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["database"]["status"] == "error"
+    assert "boom" in body["checks"]["database"]["detail"]
+
+
+def test_healthz_reports_adapter_failures(monkeypatch):
+    monkeypatch.setattr(settings, "use_live_feed", False)
+    monkeypatch.setattr(settings, "use_powerledger_live", False)
+    monkeypatch.setattr(settings, "use_ice_live", True)
+    monkeypatch.setattr(settings, "ice_api_url", "https://ice.example")
+    monkeypatch.setattr(settings, "ice_symbol", "TEST")
+    monkeypatch.setattr("app.web._probe_ice_live", lambda: {"status": "error", "detail": "timeout"})
+
+    client = _client()
+    resp = client.get("/healthz")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["checks"]["adapters"]["ice_live"]["detail"] == "timeout"

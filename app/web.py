@@ -11,7 +11,8 @@ from typing import Dict, List, Optional
 import sqlite3
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+import requests
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
@@ -34,6 +35,7 @@ _UI_HTML_PATH = Path(__file__).with_name("static").joinpath("ui.html")
 _RATE_LIMIT_MAX_CALLS = 10
 _RATE_LIMIT_WINDOW_SECONDS = 60
 _RATE_LIMIT_BUCKETS: Dict[str, List[float]] = defaultdict(list)
+_HEALTH_HTTP_TIMEOUT_SECONDS = 5
 
 # ─── Models for serialization ────────────────────────────────────────────────
 
@@ -166,12 +168,145 @@ def _orchestrator_status() -> Dict[str, object]:
     }
 
 
+def _check_database(conn: sqlite3.Connection) -> Dict[str, object]:
+    try:
+        conn.execute("SELECT 1")
+        return {"status": "ok"}
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.error("Database health check failed", exc_info=True)
+        return {"status": "error", "detail": str(exc)}
+
+
+def _check_orchestrator_health() -> Dict[str, object]:
+    status = _orchestrator_status()
+    if status["running"]:
+        return {"status": "ok", **status}
+    return {"status": "error", "detail": "orchestrator process not running", **status}
+
+
+def _probe_live_feed() -> Dict[str, object]:
+    try:
+        from app.exchange import LivePowerExchange
+
+        adapter = LivePowerExchange(
+            exchange_id=settings.live_exchange,
+            symbol=settings.live_symbol,
+            api_key=settings.live_api_key,
+            api_secret=settings.live_api_secret,
+        )
+        price = adapter.quote()
+        return {"status": "ok", "last_price": price}
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning("Live feed health check failed", exc_info=True)
+        return {"status": "error", "detail": str(exc)}
+
+
+def _probe_ice_live() -> Dict[str, object]:
+    headers = {
+        "X-API-KEY": settings.ice_api_key or "",
+        "X-API-SECRET": settings.ice_api_secret or "",
+    }
+    try:
+        resp = requests.get(
+            f"{settings.ice_api_url}/marketdata/{settings.ice_symbol}/orderbook",
+            timeout=_HEALTH_HTTP_TIMEOUT_SECONDS,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        bids = body.get("bids") or []
+        asks = body.get("asks") or []
+        return {
+            "status": "ok",
+            "status_code": resp.status_code,
+            "best_bid": float(bids[0]["price"]) if bids else None,
+            "best_ask": float(asks[0]["price"]) if asks else None,
+        }
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning("ICE live health check failed", exc_info=True)
+        return {"status": "error", "detail": str(exc)}
+
+
+def _probe_powerledger_live() -> Dict[str, object]:
+    headers = {"X-PL-API-Key": settings.powerledger_api_token or "", "X-PL-Org": settings.powerledger_org or ""}
+    try:
+        resp = requests.get(
+            f"{settings.powerledger_api_url}/markets/{settings.powerledger_market}/price",
+            timeout=_HEALTH_HTTP_TIMEOUT_SECONDS,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        return {
+            "status": "ok",
+            "status_code": resp.status_code,
+            "last_price": float(body.get("price_mwh", 0)),
+        }
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning("Powerledger health check failed", exc_info=True)
+        return {"status": "error", "detail": str(exc)}
+
+
+def _check_live_adapters() -> Dict[str, Dict[str, object]]:
+    checks: Dict[str, Dict[str, object]] = {}
+
+    if settings.use_live_feed:
+        checks["live_feed"] = _probe_live_feed()
+
+    if settings.use_ice_live:
+        checks["ice_live"] = _probe_ice_live()
+
+    if settings.use_powerledger_live:
+        checks["powerledger_live"] = _probe_powerledger_live()
+
+    if checks:
+        checks["status"] = (
+            "ok" if all(val.get("status") == "ok" for val in checks.values()) else "error"
+        )
+
+    return checks
+
+
+def _has_degraded(check: Dict[str, object]) -> bool:
+    status_value = check.get("status")
+    if isinstance(status_value, str) and status_value != "ok":
+        return True
+
+    for value in check.values():
+        if isinstance(value, dict) and _has_degraded(value):
+            return True
+
+    return False
+
+
 # ─── Health & metrics ────────────────────────────────────────────────────────
 
 
 @api.get("/healthz")
-async def health():
-    return {"status": "ok"}
+async def health(
+    probe: str = "readiness", conn: sqlite3.Connection = Depends(connection_dependency)
+):
+    checks: Dict[str, Dict[str, object]] = {}
+
+    checks["database"] = _check_database(conn)
+
+    if probe == "readiness":
+        checks["orchestrator"] = _check_orchestrator_health()
+        adapter_checks = _check_live_adapters()
+        if adapter_checks:
+            checks["adapters"] = adapter_checks
+
+    degraded = any(_has_degraded(result) for result in checks.values())
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE if degraded else status.HTTP_200_OK
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "degraded" if degraded else "ok",
+            "probe": probe,
+            "checks": checks,
+        },
+    )
 
 
 @api.get("/metrics", dependencies=[Depends(require_api_key)])

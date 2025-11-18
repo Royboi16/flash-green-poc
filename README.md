@@ -173,8 +173,9 @@ Configuration regressions are caught via `pytest -k config`, which instantiates
 4. Confirm the trading window (`TRADING_WINDOW_UTC`) spans the desired desk
    hours, then start the orchestrator with `poetry run python -m
    app.orchestrator`.
-5. Inspect `/healthz` and `/metrics` to verify Powerledger and ICE sessions are
-   reachable before opening risk limits.
+5. Inspect `/healthz` (readiness) and `/metrics` to verify Powerledger and ICE
+   sessions are reachable before opening risk limits. Readiness returns HTTP
+   503 with details when adapters fail their reachability probes.
 
 ### Wholesale-CBDC settlement
 
@@ -199,9 +200,15 @@ Configuration regressions are caught via `pytest -k config`, which instantiates
   10 minutes while markets are open.
 - Logs: ship `app/logger` output to a central stack (e.g. Loki/ELK) with
   filters on `Powerledger` and `ICE` to catch intermittent HTTP failures.
-- Health: `/healthz` should return 200; `/metrics` includes `daily_loss` and
-  spread gauges used by Grafana dashboards. Add blackbox probes for the
-  Powerledger and ICE base URLs noted above.
+- Health:
+  - `/healthz?probe=liveness` only exercises the API process and SQLite
+    connectivity. It should return 200 unless the DB is unavailable.
+  - `/healthz` (readiness) adds orchestrator status plus ICE/Powerledger/CCXT
+    probes when the corresponding live toggles are enabled. Any failure returns
+    HTTP 503 with a `checks` object describing the degraded component.
+  - `/metrics` includes `daily_loss` and spread gauges used by Grafana
+    dashboards. Add blackbox probes for the Powerledger and ICE base URLs noted
+    above.
 
 ### Controls for weekend/after-hours execution
 
