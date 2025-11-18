@@ -43,6 +43,47 @@ Then browse to `http://localhost:8000/ui` to:
 - Fetch `/healthz`, `/pnl`, `/trades`, `/orders/open`, and `/metrics` data
   directly from the browser.
 
+### One-click macOS starter
+
+The repository ships with a macOS helper that applies the latest `git` changes,
+runs `poetry install`, loads your `.env`, starts uvicorn in the background, and
+opens the control panel:
+
+```bash
+./scripts/start_macos.sh
+```
+
+Notes:
+
+- The script exits early with an actionable message when Poetry is not
+  installed (install via `pipx install poetry` on macOS).
+- It expects a populated `.env` in the repo root. Set `ENV_FILE=/path/to/.env`
+  to point to a different file. A simple preflight enforces `API_KEY` by
+  default; disable it with `PREFLIGHT=0` if you are only exploring the UI.
+- Uvicorn logs stream to `logs/uvicorn_macos.log` and the PID is stored in
+  `logs/uvicorn.pid`.
+
+### Create a double-clickable macOS app
+
+Wrap `scripts/start_macos.sh` in an Automator Application so operators can
+launch the API + UI from a desktop icon:
+
+1. Open **Automator** → **New Document** → choose **Application**.
+2. Add a **Run Shell Script** action.
+   - Shell: `/bin/bash`
+   - Pass input: *to stdin*
+   - Script contents:
+
+     ```bash
+     /bin/bash /ABSOLUTE/PATH/TO/flash-green-poc/scripts/start_macos.sh
+     ```
+
+3. Save the application as `Flash Green API.app` (e.g., in `~/Applications`).
+4. Right-click the saved app → **Make Alias**, then drag the alias to your
+   Desktop for one-click access to `http://localhost:8000/ui`.
+5. Double-click the Desktop alias to pull the latest code, refresh dependencies,
+   and open the control panel in your default browser.
+
 ### Environment templates
 
 | File | When to use | Highlights |
