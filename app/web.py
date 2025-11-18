@@ -1,6 +1,6 @@
 # app/web.py
 import asyncio
-import subprocess
+from asyncio.subprocess import PIPE
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -41,6 +41,21 @@ _RATE_LIMIT_WINDOW_SECONDS = 60
 _RATE_LIMIT_BUCKETS: Dict[str, List[float]] = defaultdict(list)
 _HEALTH_HTTP_TIMEOUT_SECONDS = 5
 _DEFAULT_AUTH_ROLE = "authenticated"
+_TEST_RUN_TIMEOUT_SECONDS = 300
+_TEST_RUN_LOCK_TIMEOUT_SECONDS = 2
+_TEST_OUTPUT_MAX_CHARS = 4000
+_ALLOWED_TEST_ARGS = {
+    "-q",
+    "-s",
+    "-v",
+    "-vv",
+    "-x",
+    "--lf",
+    "--ff",
+    "--maxfail",
+    "--disable-warnings",
+}
+_TEST_RUN_LOCK = asyncio.Lock()
 
 
 @dataclass
@@ -265,6 +280,58 @@ def _enforce_rate_limit(identifier: str, action: str) -> None:
         )
 
     _RATE_LIMIT_BUCKETS[identifier].append(now)
+
+
+def _truncate_output(output: str) -> tuple[str, bool, int]:
+    if len(output) <= _TEST_OUTPUT_MAX_CHARS:
+        return output, False, 0
+
+    trimmed_chars = len(output) - _TEST_OUTPUT_MAX_CHARS
+    return (
+        f"{output[:_TEST_OUTPUT_MAX_CHARS]}\n... [truncated {trimmed_chars} characters]",
+        True,
+        trimmed_chars,
+    )
+
+
+def _validate_pytest_args(extra_args: List[str] | None) -> List[str]:
+    if not extra_args:
+        return []
+
+    validated: List[str] = []
+    pending_value_for: str | None = None
+
+    for arg in extra_args:
+        if pending_value_for:
+            if arg.startswith("-"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Argument {pending_value_for} requires a value",
+                )
+            validated.extend([pending_value_for, arg])
+            pending_value_for = None
+            continue
+
+        base, _, _ = arg.partition("=")
+        if base not in _ALLOWED_TEST_ARGS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Argument {arg} is not permitted",
+            )
+
+        if base == "--maxfail" and "=" not in arg:
+            pending_value_for = arg
+            continue
+
+        validated.append(arg)
+
+    if pending_value_for:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Argument {pending_value_for} requires a value",
+        )
+
+    return validated
 
 
 def _audit_log(action: str, request: Request, principal: Principal, **extra: object) -> None:
@@ -581,6 +648,70 @@ async def ui_service_stop(request: Request, principal: Principal = Depends(contr
     return {"detail": "orchestrator stopped", **stopped}
 
 
+async def _run_test_command(cmd: List[str]) -> tuple[Dict[str, object], int]:
+    started_at = datetime.utcnow().isoformat() + "Z"
+    timed_out = False
+    stdout_text = ""
+    stderr_text = ""
+
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=PIPE, stderr=PIPE)
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(), timeout=_TEST_RUN_TIMEOUT_SECONDS
+        )
+        stdout_text = stdout_bytes.decode(errors="replace") if stdout_bytes else ""
+        stderr_text = stderr_bytes.decode(errors="replace") if stderr_bytes else ""
+    except asyncio.TimeoutError:
+        timed_out = True
+        process.kill()
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(), timeout=5
+            )
+            stdout_text = stdout_bytes.decode(errors="replace") if stdout_bytes else ""
+            stderr_text = stderr_bytes.decode(errors="replace") if stderr_bytes else ""
+        except asyncio.TimeoutError:
+            process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+            stderr_text = (
+                "Test execution exceeded the timeout and the process did not exit promptly."
+            )
+    finished_at = datetime.utcnow().isoformat() + "Z"
+
+    returncode = process.returncode
+    if timed_out and returncode is None:
+        returncode = -9
+
+    stdout_text, stdout_truncated, _ = _truncate_output(stdout_text)
+    stderr_text, stderr_truncated, _ = _truncate_output(stderr_text)
+
+    result = {
+        "command": cmd,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "returncode": returncode,
+        "stdout": stdout_text,
+        "stderr": stderr_text,
+        "succeeded": returncode == 0 and not timed_out,
+        "timed_out": timed_out,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+    }
+
+    if timed_out:
+        result["detail"] = (
+            f"Test execution exceeded the {_TEST_RUN_TIMEOUT_SECONDS}s limit and was terminated"
+        )
+
+    status_code = (
+        status.HTTP_504_GATEWAY_TIMEOUT if timed_out else status.HTTP_200_OK
+    )
+    return result, status_code
+
+
 @api.post("/ui/tests/run")
 async def ui_run_tests(
     request: Request,
@@ -592,36 +723,73 @@ async def ui_run_tests(
     cmd = ["poetry", "run", "pytest"]
     if payload.markers:
         cmd += ["-k", payload.markers]
-    if payload.extra_args:
-        cmd += payload.extra_args
 
-    started_at = datetime.utcnow().isoformat() + "Z"
+    cmd += _validate_pytest_args(payload.extra_args)
 
-    result = await asyncio.to_thread(
-        subprocess.run,
-        cmd,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        await asyncio.wait_for(_TEST_RUN_LOCK.acquire(), timeout=_TEST_RUN_LOCK_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        now = datetime.utcnow().isoformat() + "Z"
+        _LAST_TEST_RESULT = {
+            "command": cmd,
+            "started_at": now,
+            "finished_at": now,
+            "returncode": None,
+            "stdout": "",
+            "stderr": "Another test run is currently in progress",
+            "succeeded": False,
+            "timed_out": True,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "detail": "Test runner is busy; please retry in a moment",
+        }
+        _audit_log(
+            action="/ui/tests/run",
+            request=request,
+            principal=principal,
+            returncode=None,
+            command=cmd,
+            timed_out=True,
+            timeout_stage="lock",
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, content=_LAST_TEST_RESULT
+        )
 
-    _LAST_TEST_RESULT = {
-        "command": cmd,
-        "started_at": started_at,
-        "finished_at": datetime.utcnow().isoformat() + "Z",
-        "returncode": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "succeeded": result.returncode == 0,
-    }
+    response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+    try:
+        result, response_status = await _run_test_command(cmd)
+        _LAST_TEST_RESULT = result
+    except Exception as exc:  # noqa: BLE001
+        now = datetime.utcnow().isoformat() + "Z"
+        _LAST_TEST_RESULT = {
+            "command": cmd,
+            "started_at": now,
+            "finished_at": now,
+            "returncode": None,
+            "stdout": "",
+            "stderr": f"Test runner failed to launch: {exc}",
+            "succeeded": False,
+            "timed_out": False,
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "detail": "Test runner failed before execution",
+        }
+    finally:
+        if _TEST_RUN_LOCK.locked():
+            _TEST_RUN_LOCK.release()
 
     _audit_log(
         action="/ui/tests/run",
         request=request,
         principal=principal,
-        returncode=result.returncode,
+        returncode=_LAST_TEST_RESULT.get("returncode"),
         command=cmd,
+        timed_out=_LAST_TEST_RESULT.get("timed_out"),
+        status_code=response_status,
     )
-    return _LAST_TEST_RESULT
+    return JSONResponse(status_code=response_status, content=_LAST_TEST_RESULT)
 
 
 @api.get("/ui/tests/last", dependencies=[Depends(require_api_key)])
