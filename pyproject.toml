@@ -38,6 +38,7 @@ SQLAlchemy = "^2.0"
 alembic = "^1.13"
 psycopg2-binary = "^2.9"
 PyMySQL = "^1.1"
+PyJWT = { version = "^2.10", extras = ["crypto"] }
 
 
 [tool.poetry.group.test.dependencies]
