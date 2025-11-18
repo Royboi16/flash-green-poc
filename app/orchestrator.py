@@ -4,8 +4,12 @@ Drives a single arbitrage cycle and (if run as __main__)
 loops forever once every second.
 """
 
+import random
+import signal
 from datetime import date, datetime, time, timezone
+from threading import Event, Lock, Thread
 from time import sleep
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -336,9 +340,161 @@ def run_cycle() -> bool:
             wallet["gbp"] = 0
 
 
-if __name__ == "__main__":
-    from threading import Thread
+class OrchestratorService:
+    def __init__(
+        self,
+        run_interval_seconds: float = 1.0,
+        backoff_initial_seconds: float = 1.0,
+        backoff_max_seconds: float = 30.0,
+    ) -> None:
+        self.run_interval_seconds = run_interval_seconds
+        self.backoff_initial_seconds = backoff_initial_seconds
+        self.backoff_max_seconds = backoff_max_seconds
+        self.stop_event = Event()
+        self._thread: Thread | None = None
+        self._lock = Lock()
+        self.restart_count = 0
+        self.last_error: str | None = None
+        self.last_success_at: datetime | None = None
+        self.last_start_at: datetime | None = None
 
+    def start(self) -> None:
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self.stop_event.clear()
+            self.last_start_at = datetime.utcnow()
+            self._thread = Thread(target=self._run_loop, daemon=True)
+            self._thread.start()
+            logger.info("Orchestrator service started")
+
+    def _run_loop(self) -> None:
+        backoff = self.backoff_initial_seconds
+        while not self.stop_event.is_set():
+            try:
+                if run_cycle():
+                    logger.info("[green]✅  trade executed[/green]")
+                self.last_error = None
+                self.last_success_at = datetime.utcnow()
+                backoff = self.backoff_initial_seconds
+            except Exception as exc:  # pragma: no cover - defensive guard
+                self.restart_count += 1
+                self.last_error = str(exc)
+                logger.exception("Unhandled error in orchestrator cycle; backing off")
+                backoff = min(backoff * 2, self.backoff_max_seconds)
+
+            delay = backoff if self.last_error else self.run_interval_seconds
+            self.stop_event.wait(delay)
+
+    def stop(self, timeout: float | None = 10.0) -> None:
+        self.stop_event.set()
+        thread = self._thread
+        if thread:
+            thread.join(timeout=timeout)
+        logger.info("Orchestrator service stopped")
+
+    def is_running(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
+
+    def status(self) -> dict[str, object]:
+        return {
+            "running": self.is_running(),
+            "restart_count": self.restart_count,
+            "last_error": self.last_error,
+            "last_success_at": self.last_success_at.isoformat() if self.last_success_at else None,
+            "last_start_at": self.last_start_at.isoformat() if self.last_start_at else None,
+        }
+
+
+class OrchestratorSupervisor:
+    def __init__(
+        self,
+        service_factory: Callable[[], OrchestratorService],
+        health_check_interval: float = 2.0,
+        restart_jitter_range: tuple[float, float] = (0.5, 2.0),
+    ) -> None:
+        self._service_factory = service_factory
+        self._service: OrchestratorService | None = None
+        self._monitor_thread: Thread | None = None
+        self._stop_event = Event()
+        self._lock = Lock()
+        self.health_check_interval = health_check_interval
+        self.restart_jitter_range = restart_jitter_range
+        self.supervisor_restart_count = 0
+        self.last_error: str | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            self._stop_event.clear()
+            self._ensure_service()
+            if not self._monitor_thread or not self._monitor_thread.is_alive():
+                self._monitor_thread = Thread(
+                    target=self._monitor_loop, name="orchestrator-supervisor", daemon=True
+                )
+                self._monitor_thread.start()
+                logger.info("Orchestrator supervisor started")
+
+    def _ensure_service(self) -> None:
+        if self._service and self._service.is_running():
+            return
+        self._service = self._service_factory()
+        self._service.start()
+
+    def _monitor_loop(self) -> None:
+        while not self._stop_event.wait(self.health_check_interval):
+            with self._lock:
+                service = self._service
+            if service and service.is_running():
+                continue
+            if self._stop_event.is_set():
+                break
+            self.supervisor_restart_count += 1
+            self.last_error = service.last_error if service else None
+            jitter = random.uniform(*self.restart_jitter_range)
+            logger.warning(
+                "Orchestrator service not running; restarting after %.2fs jitter", jitter
+            )
+            self._stop_event.wait(jitter)
+            with self._lock:
+                self._ensure_service()
+
+    def stop(self, timeout: float | None = 10.0) -> None:
+        self._stop_event.set()
+        with self._lock:
+            service = self._service
+        if service:
+            service.stop(timeout=timeout)
+        monitor = self._monitor_thread
+        if monitor:
+            monitor.join(timeout=timeout)
+        logger.info("Orchestrator supervisor stopped")
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return bool(self._service and self._service.is_running())
+
+    def status(self) -> dict[str, object]:
+        with self._lock:
+            service_status = self._service.status() if self._service else {"running": False}
+            monitor_running = bool(self._monitor_thread and self._monitor_thread.is_alive())
+        return {
+            **service_status,
+            "supervisor_running": monitor_running,
+            "supervisor_restart_count": self.supervisor_restart_count,
+            "last_error": service_status.get("last_error") or self.last_error,
+        }
+
+
+def _install_signal_handlers(service: OrchestratorService) -> None:
+    def _handler(signum, _frame):
+        logger.info("Received signal %s; stopping orchestrator service", signum)
+        service.stop()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, _handler)
+
+
+if __name__ == "__main__":
     import uvicorn
     from prometheus_client import start_http_server
 
@@ -364,8 +520,9 @@ if __name__ == "__main__":
     Thread(target=_start_api, daemon=True).start()
     logger.info("FastAPI health & Prom JSON on port %s", settings.api_port)
 
-    logger.info("Starting flash-green PoC loop …")
-    while True:
-        if run_cycle():
-            logger.info("[green]✅  trade executed[/green]")
-        sleep(1)
+    service = OrchestratorService()
+    _install_signal_handlers(service)
+    service.start()
+
+    while service.is_running():
+        service.stop_event.wait(1)
