@@ -14,7 +14,7 @@ import app.metrics as metrics_module
 import app.storage as storage
 from app import orchestrator
 from app.exchange import Fill
-from app.strategy import kelly_size
+from app.strategy import QuoteSnapshot, select_route
 
 
 class DummyCounter:
@@ -67,6 +67,7 @@ def reset_state(monkeypatch, tmp_path):
     monkeypatch.setattr(orchestrator.settings, "max_notional_per_trade", 1_000_000.0)
     monkeypatch.setattr(orchestrator.settings, "neg_threshold", 100.0)
     monkeypatch.setattr(orchestrator.settings, "spread_min", 1.0)
+    monkeypatch.setattr(orchestrator.settings, "slippage_bp", 0.0)
 
 
 class StaticPower:
@@ -112,9 +113,15 @@ def test_run_cycle_records_trade(monkeypatch):
     trades = storage.get_trades()
     assert len(trades) == 1
 
-    spread = futures.quote_price - power.quote_price
-    expected_qty = kelly_size(spread)
-    expected_profit = expected_qty * power.quote_price + expected_qty * futures.quote_price
+    plan = select_route(
+        QuoteSnapshot(
+            spot_price=power.quote_price,
+            futures_price=futures.quote_price,
+            slippage_bp=orchestrator.settings.slippage_bp,
+        )
+    )
+    expected_qty = plan.qty_mwh
+    expected_profit = plan.expected_profit
 
     trade = trades[0]
     assert trade["qty_mwh"] == pytest.approx(expected_qty)
