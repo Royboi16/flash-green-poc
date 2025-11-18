@@ -45,15 +45,20 @@ elif settings.use_depth_sim:
 else:
     POWER = PowerExchange()
 
-# futures: live ICE when enabled
+# futures: live adapter when enabled
 if settings.use_ice_live:
-    from app.exchange_ice import ICEPowerExchange as IceExchange
+    if settings.futures_live_adapter == "ice_rest":
+        from app.exchange_ice import ICERepoFuturesExchange as FuturesExchange
+    elif settings.futures_live_adapter == "fnality_repo":
+        from app.exchange_repo import FnalityRepoExchange as FuturesExchange
+    else:  # pragma: no cover - Literal guards valid inputs
+        from app.exchange_ice import ICERepoFuturesExchange as FuturesExchange
 
-    ice = IceExchange()
+    FUTURES = FuturesExchange()
 else:
     from app.exchange import IceCsvExchange
 
-    ice = IceCsvExchange()
+    FUTURES = IceCsvExchange()
 
 # flash-loan adapter (unchanged)
 if settings.use_web3_loan:
@@ -214,10 +219,10 @@ def run_cycle() -> bool:
         return False
 
     POWER.advance()
-    ice.advance()
+    FUTURES.advance()
 
     spot = POWER.quote()
-    fut = ice.quote()
+    fut = FUTURES.quote()
     logger.debug("TICK:   spot=%r, fut=%r, spread=%r", spot, fut, fut - spot)
 
     trade, qty, spread = should_trade(spot, fut)
@@ -265,7 +270,7 @@ def run_cycle() -> bool:
                     raise RepoSettlementError("Notional limit exceeded")
 
                 _persist_buy_order(fill_a, qty)
-                fill_b = ice.sell(qty)
+                fill_b = FUTURES.sell(qty)
                 _record_trade(fill_a, fill_b, qty, spot, fut)
                 return True
         except RepoSettlementError as exc:
@@ -287,7 +292,7 @@ def run_cycle() -> bool:
 
             wallet["gbp"] += fill_a.qty_mwh * fill_a.price
 
-            fill_b = ice.sell(qty)
+            fill_b = FUTURES.sell(qty)
             wallet["gbp"] += fill_b.qty_mwh * fill_b.price
 
             profit = _record_trade(fill_a, fill_b, qty, spot, fut)

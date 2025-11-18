@@ -104,7 +104,7 @@ def test_run_cycle_records_trade(monkeypatch):
     power = StaticPower(quote_price=10.0)
     futures = StaticFutures(quote_price=50.0)
     monkeypatch.setattr(orchestrator, "POWER", power)
-    monkeypatch.setattr(orchestrator, "ice", futures)
+    monkeypatch.setattr(orchestrator, "FUTURES", futures)
 
     executed = orchestrator.run_cycle()
     assert executed is True
@@ -133,7 +133,7 @@ def test_run_cycle_blocks_notional(monkeypatch):
     power = StaticPower(quote_price=5.0)
     futures = StaticFutures(quote_price=10.0)
     monkeypatch.setattr(orchestrator, "POWER", power)
-    monkeypatch.setattr(orchestrator, "ice", futures)
+    monkeypatch.setattr(orchestrator, "FUTURES", futures)
 
     executed = orchestrator.run_cycle()
     assert executed is False

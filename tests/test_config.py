@@ -35,6 +35,20 @@ def test_ice_live_requires_all_fields():
         _settings(use_ice_live=True, ice_api_url=None)
 
 
+def test_fnality_repo_adapter_requires_credentials():
+    with pytest.raises(ValueError, match="Fnality/HQLAˣ repo config"):
+        _settings(
+            use_ice_live=True,
+            futures_live_adapter="fnality_repo",
+            ice_api_url="https://ice.example",  # required for the power leg
+            ice_api_key="k",
+            ice_api_secret="s",
+            fnality_repo_api_url=None,
+            fnality_repo_api_token=None,
+            fnality_repo_market=None,
+        )
+
+
 def test_web3_loan_requires_credentials():
     with pytest.raises(ValueError, match="USE_WEB3_LOAN=1"):
         _settings(
