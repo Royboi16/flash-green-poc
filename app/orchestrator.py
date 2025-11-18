@@ -11,6 +11,7 @@ from time import sleep
 from app.config import settings
 from app.logger import logger
 from app.metrics import METRICS
+from app.loan_repo import FnalityHQLAXFlashAdapter, RepoSettlementError
 from app.storage import (
     Order,
     get_connection,
@@ -170,25 +171,27 @@ def run_cycle() -> bool:
         METRICS.daily_loss.set(_daily_loss)
 
     now = datetime.now(tz=timezone.utc)
-    if not settings.allow_weekend_trading and now.weekday() >= 5:
+    live_trading = settings.use_powerledger_live or settings.use_ice_live
+    if live_trading and not settings.allow_weekend_trading and now.weekday() >= 5:
         METRICS.trades_blocked.inc()
         logger.info("Weekend guard active; skipping trades on Saturday/Sunday")
         return False
 
-    start, end = _parse_window(settings.trading_window_utc)
-    now_time = now.time()
-    if start <= end:
-        in_window = start <= now_time <= end
-    else:
-        in_window = now_time >= start or now_time <= end
-    if not in_window:
-        METRICS.trades_blocked.inc()
-        logger.info(
-            "Outside configured trading window %s; current UTC %s",
-            settings.trading_window_utc,
-            now.strftime("%H:%M"),
-        )
-        return False
+    if live_trading:
+        start, end = _parse_window(settings.trading_window_utc)
+        now_time = now.time()
+        if start <= end:
+            in_window = start <= now_time <= end
+        else:
+            in_window = now_time >= start or now_time <= end
+        if not in_window:
+            METRICS.trades_blocked.inc()
+            logger.info(
+                "Outside configured trading window %s; current UTC %s",
+                settings.trading_window_utc,
+                now.strftime("%H:%M"),
+            )
+            return False
 
     if settings.use_ice_live or settings.use_powerledger_live:
         with get_connection() as conn:
@@ -242,34 +245,32 @@ def run_cycle() -> bool:
         return False
 
     if settings.use_web3_loan:
-        try:
-            loan = FlashLoanAdapter(
+        repo_adapter = FnalityHQLAXFlashAdapter(
+            flash_loan=FlashLoanAdapter(
                 lender_address=settings.flash_loan_contract,
                 private_key=settings.lender_private_key,
                 rpc_url=str(settings.hardhat_rpc),
-            )
-            loan.flash_loan(
-                receiver_address=settings.receiver_address,
-                amount_wei=LOAN_LIMIT_GBP * 10**18,
-            )
+            ),
+            receiver_address=settings.receiver_address,
+            cash_token=settings.fnality_cash_token,
+            asset_token=settings.hqlax_token,
+        )
 
-            try:
+        try:
+            with repo_adapter.transactional_repo(
+                cash_amount_wei=int(LOAN_LIMIT_GBP * 10**18)
+            ):
                 fill_a = POWER.buy(qty, max_price=spot)
-            except RuntimeError as exc:
-                logger.warning("Power leg failed during flash-loan flow: %s", exc)
-                METRICS.trades_blocked.inc()
-                return False
+                if not _check_notional(fill_a):
+                    raise RepoSettlementError("Notional limit exceeded")
 
-            if not _check_notional(fill_a):
-                return False
-
-            _persist_buy_order(fill_a, qty)
-            fill_b = ice.sell(qty)
-            _record_trade(fill_a, fill_b, qty, spot, fut)
-            return True
-        except Exception:
+                _persist_buy_order(fill_a, qty)
+                fill_b = ice.sell(qty)
+                _record_trade(fill_a, fill_b, qty, spot, fut)
+                return True
+        except RepoSettlementError as exc:
             METRICS.trades_blocked.inc()
-            logger.exception("Flash-loan trade failed")
+            logger.warning("Flash-loan repo trade aborted: %s", exc)
             return False
 
     with FlashLoanAdapter(limit_gbp=LOAN_LIMIT_GBP) as wallet:
