@@ -19,7 +19,11 @@ app.orchestrator` will load the `.env` file automatically.
 
 API endpoints that expose metrics or trading data require a shared secret in the
 `X-API-Key` header. Set `API_KEY` in your `.env` (or secret manager) and pass it
-with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`.
+with each request to `/metrics`, `/pnl`, `/trades`, and `/orders/open`. The
+control-plane endpoints that start/stop the orchestrator or run tests **refuse
+all requests** when `API_KEY` is missing or incorrect and are rate limited with
+audit logging. See `docs/deployment.md` for the minimum security checklist
+before exposing the service.
 
 ## Local API + UI
 

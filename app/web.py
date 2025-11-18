@@ -2,13 +2,15 @@
 import asyncio
 import os
 import subprocess
+import time
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import sqlite3
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -29,6 +31,9 @@ _ORCHESTRATOR_CMD = ["python", "-m", "app.orchestrator"]
 _orchestrator_process: Optional[subprocess.Popen[str]] = None
 _LAST_TEST_RESULT: Optional[Dict[str, object]] = None
 _UI_HTML_PATH = Path(__file__).with_name("static").joinpath("ui.html")
+_RATE_LIMIT_MAX_CALLS = 10
+_RATE_LIMIT_WINDOW_SECONDS = 60
+_RATE_LIMIT_BUCKETS: Dict[str, List[float]] = defaultdict(list)
 
 # ─── Models for serialization ────────────────────────────────────────────────
 
@@ -71,20 +76,59 @@ class TestRunRequest(BaseModel):
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
 
-async def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+async def require_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> str:
     expected_key = settings.api_key
 
-    # In development/test environments the API can be used without configuring an
-    # API_KEY. When a key is set (staging/production), the header is required.
     if not expected_key:
-        logger.debug("API_KEY not configured; skipping authentication")
-        return
-
-    if x_api_key != expected_key:
+        logger.error("API_KEY is not configured; refusing authenticated endpoint")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
+            detail="API_KEY is not configured for this service",
         )
+
+    if not x_api_key or x_api_key != expected_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+        )
+
+    return x_api_key
+
+
+def _rate_limit_identifier(api_key: str, request: Request) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    return f"{api_key}:{client_host}"
+
+
+def _enforce_rate_limit(identifier: str, action: str) -> None:
+    now = time.monotonic()
+    window_start = now - _RATE_LIMIT_WINDOW_SECONDS
+    bucket = _RATE_LIMIT_BUCKETS[identifier]
+    _RATE_LIMIT_BUCKETS[identifier] = [ts for ts in bucket if ts >= window_start]
+
+    if len(_RATE_LIMIT_BUCKETS[identifier]) >= _RATE_LIMIT_MAX_CALLS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded for {action}",
+        )
+
+    _RATE_LIMIT_BUCKETS[identifier].append(now)
+
+
+async def control_plane_guard(
+    request: Request, api_key: str = Depends(require_api_key)
+) -> str:
+    identifier = _rate_limit_identifier(api_key=api_key, request=request)
+    _enforce_rate_limit(identifier=identifier, action=request.url.path)
+    logger.info(
+        "AUDIT control-plane action=%s client=%s identifier=%s",
+        request.url.path,
+        request.client.host if request.client else "unknown",
+        identifier,
+    )
+    return api_key
 
 
 def _load_ui_html() -> str:
@@ -204,8 +248,10 @@ async def ui_service_status():
     return _orchestrator_status()
 
 
-@api.post("/ui/services/start", dependencies=[Depends(require_api_key)])
-async def ui_service_start(request: ServiceStartRequest):
+@api.post("/ui/services/start")
+async def ui_service_start(
+    request: ServiceStartRequest, api_key: str = Depends(control_plane_guard)
+):
     global _orchestrator_process
 
     if _orchestrator_process and _orchestrator_process.poll() is None:
@@ -231,11 +277,16 @@ async def ui_service_start(request: ServiceStartRequest):
             detail=f"Could not start orchestrator: {exc}",
         )
 
+    logger.info(
+        "AUDIT orchestrator start issued by key=%s command=%s",
+        api_key,
+        cmd,
+    )
     return {"detail": "orchestrator started", **_orchestrator_status()}
 
 
-@api.post("/ui/services/stop", dependencies=[Depends(require_api_key)])
-async def ui_service_stop():
+@api.post("/ui/services/stop")
+async def ui_service_stop(api_key: str = Depends(control_plane_guard)):
     global _orchestrator_process
 
     if _orchestrator_process is None or _orchestrator_process.poll() is not None:
@@ -250,11 +301,18 @@ async def ui_service_stop():
 
     stopped = _orchestrator_status()
     _orchestrator_process = None
+    logger.info(
+        "AUDIT orchestrator stop issued by key=%s status=%s",
+        api_key,
+        stopped,
+    )
     return {"detail": "orchestrator stopped", **stopped}
 
 
-@api.post("/ui/tests/run", dependencies=[Depends(require_api_key)])
-async def ui_run_tests(request: TestRunRequest):
+@api.post("/ui/tests/run")
+async def ui_run_tests(
+    request: TestRunRequest, api_key: str = Depends(control_plane_guard)
+):
     global _LAST_TEST_RESULT
 
     cmd = ["poetry", "run", "pytest"]
@@ -282,6 +340,12 @@ async def ui_run_tests(request: TestRunRequest):
         "succeeded": result.returncode == 0,
     }
 
+    logger.info(
+        "AUDIT tests run by key=%s returncode=%s command=%s",
+        api_key,
+        result.returncode,
+        cmd,
+    )
     return _LAST_TEST_RESULT
 
 
