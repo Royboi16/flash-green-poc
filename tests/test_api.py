@@ -2,6 +2,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
+import app.web as web
 from app.web import api, connection_dependency, settings
 
 
@@ -107,3 +108,90 @@ def test_healthz_reports_adapter_failures(monkeypatch):
     body = resp.json()
     assert body["status"] == "degraded"
     assert body["checks"]["adapters"]["ice_live"]["detail"] == "timeout"
+
+
+def test_ui_service_start_enforces_fixed_command(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "secret-key")
+    monkeypatch.setattr(web, "_orchestrator_process", None)
+
+    started = {}
+
+    class DummyProcess:
+        pid = 999
+
+        def __init__(self, args, env=None):
+            started["args"] = args
+            started["env"] = env or {}
+            self.args = args
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(web.subprocess, "Popen", lambda args, env=None: DummyProcess(args, env))
+
+    client = _client()
+    resp = client.post(
+        "/ui/services/start",
+        headers=_auth_headers("secret-key"),
+        json={
+            "command": web._ORCHESTRATOR_CMD.copy(),
+            "env": {"ENV_FILE": ".env.custom", "USE_LIVE_FEED": "0"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert started["args"] == web._ORCHESTRATOR_CMD
+    assert started["env"]["ENV_FILE"] == ".env.custom"
+    assert started["env"]["USE_LIVE_FEED"] == "0"
+
+
+def test_ui_service_start_rejects_custom_command(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "secret-key")
+    monkeypatch.setattr(web, "_orchestrator_process", None)
+    monkeypatch.setattr(web.subprocess, "Popen", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError()))
+    warnings: list[tuple[tuple, dict]] = []
+
+    def _fake_warning(*args, **kwargs):
+        warnings.append((args, kwargs))
+
+    monkeypatch.setattr(web.logger, "warning", _fake_warning)
+
+    client = _client()
+    resp = client.post(
+        "/ui/services/start",
+        headers=_auth_headers("secret-key"),
+        json={"command": ["/bin/echo", "hi"]},
+    )
+
+    assert resp.status_code == 400
+    assert warnings
+    assert "disallowed_command" in warnings[0][0][0]
+
+
+def test_ui_service_start_rejects_unapproved_env(monkeypatch):
+    monkeypatch.setattr(settings, "api_key", "secret-key")
+    monkeypatch.setattr(web, "_orchestrator_process", None)
+    called = {}
+    warnings: list[tuple[tuple, dict]] = []
+
+    def _fake_popen(*_args, **_kwargs):
+        called["invoked"] = True
+        raise AssertionError("Popen should not be called when env is invalid")
+
+    def _fake_warning(*args, **kwargs):
+        warnings.append((args, kwargs))
+
+    monkeypatch.setattr(web.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(web.logger, "warning", _fake_warning)
+
+    client = _client()
+    resp = client.post(
+        "/ui/services/start",
+        headers=_auth_headers("secret-key"),
+        json={"env": {"UNSAFE": "1"}},
+    )
+
+    assert resp.status_code == 400
+    assert warnings
+    assert "disallowed_env" in warnings[0][0][0]
+    assert not called

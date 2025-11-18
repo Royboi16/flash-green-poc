@@ -36,6 +36,13 @@ _RATE_LIMIT_MAX_CALLS = 10
 _RATE_LIMIT_WINDOW_SECONDS = 60
 _RATE_LIMIT_BUCKETS: Dict[str, List[float]] = defaultdict(list)
 _HEALTH_HTTP_TIMEOUT_SECONDS = 5
+_ALLOWED_START_ENV_KEYS = {
+    "ENV_FILE",
+    "TRADING_ENABLED",
+    "USE_LIVE_FEED",
+    "USE_ICE_LIVE",
+    "USE_WEB3_LOAN",
+}
 
 # ─── Models for serialization ────────────────────────────────────────────────
 
@@ -135,6 +142,43 @@ async def control_plane_guard(
         identifier,
     )
     return api_key
+
+
+def _validate_orchestrator_command(
+    requested_command: Optional[List[str]], api_key: str
+) -> List[str]:
+    if requested_command and requested_command != _ORCHESTRATOR_CMD:
+        logger.warning(
+            "AUDIT orchestrator start rejected by key=%s reason=disallowed_command command=%s",
+            api_key,
+            requested_command,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Custom commands are not permitted for orchestrator",
+        )
+    return _ORCHESTRATOR_CMD
+
+
+def _validated_start_env(
+    env_overrides: Optional[Dict[str, str]], api_key: str
+) -> Dict[str, str]:
+    if not env_overrides:
+        return {}
+
+    disallowed = sorted(set(env_overrides) - _ALLOWED_START_ENV_KEYS)
+    if disallowed:
+        logger.warning(
+            "AUDIT orchestrator start rejected by key=%s reason=disallowed_env env_keys=%s",
+            api_key,
+            disallowed,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Env overrides not permitted: {', '.join(disallowed)}",
+        )
+
+    return {key: value for key, value in env_overrides.items() if key in _ALLOWED_START_ENV_KEYS}
 
 
 def _load_ui_html() -> str:
@@ -397,10 +441,9 @@ async def ui_service_start(
         return {"detail": "orchestrator already running", **_orchestrator_status()}
 
     env = os.environ.copy()
-    if request.env:
-        env.update(request.env)
+    env.update(_validated_start_env(request.env, api_key=api_key))
 
-    cmd = request.command or _ORCHESTRATOR_CMD
+    cmd = _validate_orchestrator_command(request.command, api_key=api_key)
 
     try:
         _orchestrator_process = subprocess.Popen(cmd, env=env)
