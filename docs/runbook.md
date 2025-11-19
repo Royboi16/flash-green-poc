@@ -7,6 +7,7 @@ This runbook captures the actions and expectations for shipping and operating Fl
    - `API_KEY` plus either `CLIENT_CERT_SUBJECT_HEADER` or the `OIDC_ISSUER`/`OIDC_AUDIENCE` pair.
    - Database coordinates (`DATABASE_URL` or the `DB_*` trio), and any live adapters you plan to enable (`USE_LIVE_FEED`, `USE_ICE_LIVE`, `USE_POWERLEDGER_LIVE`, `USE_WEB3_LOAN`).
    - Secret backend settings when used: `VAULT_ADDR`/`VAULT_TOKEN`/`VAULT_SECRET_PATH` for Vault, or `AWS_SECRETS_REGION`/`AWS_SECRETS_ID` for AWS.
+   - A **local-only escape hatch** exists for development: exporting `ALLOW_INSECURE_LOCAL_AUTH=1` skips the `API_KEY` and identity-provider requirements. Do not set this in staging or production.
 2. **Run the preflight validator** before the first pod/task starts:
    ```bash
    python scripts/preflight_check.py --env-file /path/to/.env

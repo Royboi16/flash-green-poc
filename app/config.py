@@ -142,6 +142,14 @@ class Settings(BaseSettings):
         env="API_KEY",
         description="Shared secret required for protected HTTP endpoints",
     )
+    allow_insecure_local_auth: bool = Field(
+        False,
+        env="ALLOW_INSECURE_LOCAL_AUTH",
+        description=(
+            "Development-only bypass for local runs; requires explicit opt-in "
+            "and must stay disabled in shared environments"
+        ),
+    )
     require_https: bool = Field(
         True,
         env="REQUIRE_HTTPS",
@@ -563,6 +571,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_identity_provider(cls, model: "Settings") -> "Settings":
+        if model.allow_insecure_local_auth:
+            return model
+
         oidc_configured = bool(model.oidc_issuer and model.oidc_audience)
         if not (oidc_configured or model.client_cert_subject_header):
             raise ValueError(
@@ -586,6 +597,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_api_key(cls, model: "Settings") -> "Settings":
+        if model.allow_insecure_local_auth:
+            return model
+
         if not model.api_key:
             raise ValueError("API_KEY is required for all deployments")
         return model
